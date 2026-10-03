@@ -3,7 +3,8 @@
 import { money, num } from "@/lib/format";
 
 // Categorical colors for per-agent contributions (distinct from state colors).
-const SERIES = ["#818cf8", "#2dd4bf", "#f472b6", "#facc15", "#a78bfa", "#60a5fa", "#fb7185"];
+// All >= 3:1 against the surface so bars stay distinguishable (checked with WCAG contrast).
+const SERIES = ["#4f46e5", "#0f766e", "#be185d", "#a16207", "#6d28d9", "#1d4ed8", "#be123c"];
 
 export interface Contribution {
   amount: string;
@@ -31,41 +32,42 @@ export function ExposureBar({
 
   return (
     <div className="w-full">
-      <div className={`relative w-full overflow-visible rounded bg-zinc-800 ${compact ? "h-3" : "h-6"}`}>
-        <div className="absolute inset-0 flex overflow-hidden rounded">
+      <div className={`neu-inset-sm relative w-full overflow-visible ${compact ? "h-3" : "h-6"}`}>
+        <div className="absolute inset-0 flex overflow-hidden rounded-[10px]">
           {contributions.length > 0 ? (
             contributions.map((c, i) => (
               <div
                 key={i}
                 title={`${c.actor_id}: ${money(c.amount)}`}
                 style={{ width: `${(num(c.amount) / scale) * 100}%`, background: SERIES[i % SERIES.length] }}
-                className="h-full border-r-2 border-zinc-900 last:border-r-0"
+                className="h-full border-r-2 border-neu last:border-r-0"
               />
             ))
           ) : (
             <div
               style={{ width: `${(total / scale) * 100}%` }}
-              className={`h-full ${over ? "bg-red-500" : "bg-emerald-500"}`}
+              className={`h-full ${over ? "bg-red-600" : "bg-emerald-600"}`}
             />
           )}
         </div>
         {limPct !== null && (
-          <div className="absolute -inset-y-1 w-0.5 bg-zinc-100" style={{ left: `${limPct}%` }} title={`limit ${money(limit)}`}>
+          <div className="absolute -inset-y-1 w-0.5" style={{ left: `${limPct}%` }} title={`limit ${money(limit)}`}>
+            <span aria-hidden className="absolute inset-0 rounded bg-ink" />
             {!compact && (
-              <span className="absolute -top-4 left-1 whitespace-nowrap text-[10px] font-semibold text-zinc-200">
+              <span className="absolute -top-4 left-1 whitespace-nowrap text-xs font-semibold text-ink">
                 limit {money(limit)}
               </span>
             )}
           </div>
         )}
       </div>
-      <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px]">
-        <span className={over ? "font-semibold text-red-300" : "text-emerald-300"}>
+      <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+        <span className={over ? "font-semibold text-bad" : "text-ok"}>
           exposure {money(total)} {hasLimit ? `${over ? ">" : "≤"} limit ${money(lim)}` : "(no limit)"}
         </span>
         {!compact &&
           contributions.map((c, i) => (
-            <span key={i} className="flex items-center gap-1 text-zinc-400">
+            <span key={i} className="flex items-center gap-1 text-mute">
               <span className="inline-block h-2 w-2 rounded-sm" style={{ background: SERIES[i % SERIES.length] }} />
               <span className="font-mono">{c.actor_id}</span> {money(c.amount)}
             </span>

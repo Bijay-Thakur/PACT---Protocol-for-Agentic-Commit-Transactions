@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Image from "next/image";
 import Link from "next/link";
 import "./globals.css";
 
@@ -9,25 +10,36 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en" className="dark">
-      <body className="min-h-screen bg-zinc-950 text-zinc-200 antialiased">
-        <header className="border-b border-zinc-800 bg-zinc-950/90 backdrop-blur">
-          <div className="mx-auto flex max-w-[1600px] items-center gap-4 px-6 py-3">
-            <Link href="/" className="flex items-baseline gap-3">
-              <span className="font-mono text-lg font-bold tracking-widest text-zinc-50">PACT</span>
-              <span className="hidden text-xs text-zinc-400 sm:inline">
-                The commit &amp; accountability layer for multi-agent operations
-              </span>
-            </Link>
-            <nav className="ml-auto flex items-center gap-4 text-xs text-zinc-400">
-              <Link href="/" className="hover:text-zinc-100">
-                Scenarios &amp; transactions
+    <html lang="en">
+      <body className="min-h-screen bg-neu text-ink antialiased">
+        <div className="mx-auto max-w-[1600px] px-6 pt-5">
+          <header className="neu-raised">
+            <div className="flex items-center gap-4 px-6 py-3.5">
+              <Link href="/" className="flex items-center gap-4 rounded-lg" aria-label="PACT console home">
+                <Image
+                  src="/Assets/Images/pact-logo.png"
+                  alt="PACT"
+                  width={916}
+                  height={275}
+                  preload
+                  className="h-11 w-auto"
+                />
+                <span className="hidden max-w-[22rem] text-xs leading-snug text-mute sm:inline">
+                  The commit &amp; accountability layer for multi-agent operations
+                </span>
               </Link>
-              <span className="font-mono text-zinc-600">{process.env.NEXT_PUBLIC_PACT_API_URL || "http://localhost:8000"}</span>
-            </nav>
-          </div>
-        </header>
-        <main className="mx-auto max-w-[1600px] px-6 py-5">{children}</main>
+              <nav className="ml-auto flex items-center gap-4 text-xs text-mute">
+                <Link href="/" className="neu-btn px-4 py-2 text-xs">
+                  Scenarios &amp; transactions
+                </Link>
+                <span className="neu-chip hidden px-3 py-1.5 font-mono text-faint md:inline">
+                  {process.env.NEXT_PUBLIC_PACT_API_URL || "http://localhost:8000"}
+                </span>
+              </nav>
+            </div>
+          </header>
+        </div>
+        <main className="mx-auto max-w-[1600px] px-6 py-6">{children}</main>
       </body>
     </html>
   );

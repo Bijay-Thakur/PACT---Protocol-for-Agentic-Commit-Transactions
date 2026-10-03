@@ -7,26 +7,26 @@ import { Expandable, JsonView, KV, Mono, StateBadge } from "../ui";
 import { ProviderVsReality } from "./ProviderVsReality";
 
 export function EffectInspector({ effect }: { effect: Effect | null }) {
-  if (!effect) return <div className="text-sm text-zinc-500">Select an effect in the DAG.</div>;
+  if (!effect) return <div className="text-sm text-faint">Select an effect in the DAG.</div>;
   const rec = effect.reconciliation_result;
   const comp = effect.compensation_result;
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
-        <Mono className="text-sm font-semibold text-zinc-50">{effect.effect_type}</Mono>
+        <Mono className="text-sm font-semibold text-ink">{effect.effect_type}</Mono>
         <StateBadge state={effect.state} />
-        <span className="text-xs text-zinc-400">
+        <span className="text-xs text-mute">
           by <Mono>{effect.actor_id}</Mono>
         </span>
-        {effect.amount && <span className="text-xs text-zinc-300">{money(effect.amount)}</span>}
-        <Mono className="ml-auto text-[10px] text-zinc-600">{shortId(effect.id)}</Mono>
+        {effect.amount && <span className="text-xs text-ink-soft">{money(effect.amount)}</span>}
+        <Mono className="ml-auto text-xs text-faint">{shortId(effect.id)}</Mono>
       </div>
 
       <ProviderVsReality effect={effect} />
 
       {rec && (
-        <div className="rounded-md border border-amber-800/70 bg-amber-950/20 p-3">
-          <div className="text-[10px] font-semibold uppercase tracking-widest text-amber-400">Reconciliation result</div>
+        <div className="neu-inset border-l-4 border-amber-700 p-4">
+          <div className="text-xs font-semibold uppercase tracking-widest text-warn">Reconciliation result</div>
           <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
             outcome <StateBadge state={rec.outcome ?? null} size="xs" />
             {rec.finding?.finding && (
@@ -34,9 +34,9 @@ export function EffectInspector({ effect }: { effect: Effect | null }) {
                 finding <StateBadge state={rec.finding.finding} size="xs" />
               </>
             )}
-            {rec.attempt_no !== undefined && <span className="text-zinc-500">attempt {rec.attempt_no}</span>}
+            {rec.attempt_no !== undefined && <span className="text-faint">attempt {rec.attempt_no}</span>}
           </div>
-          {rec.finding?.reason && <div className="mt-1 text-xs text-amber-100">{rec.finding.reason}</div>}
+          {rec.finding?.reason && <div className="mt-1 text-xs text-warn">{rec.finding.reason}</div>}
           <Expandable label="raw reconciliation_result">
             <JsonView value={rec} maxHeight={200} />
           </Expandable>
@@ -44,31 +44,31 @@ export function EffectInspector({ effect }: { effect: Effect | null }) {
       )}
 
       {comp && (
-        <div className="rounded-md border border-sky-800/70 bg-sky-950/20 p-3">
-          <div className="text-[10px] font-semibold uppercase tracking-widest text-sky-400">Compensation result</div>
+        <div className="neu-inset border-l-4 border-sky-600 p-4">
+          <div className="text-xs font-semibold uppercase tracking-widest text-info">Compensation result</div>
           <div className="mt-1 grid grid-cols-2 gap-3 text-xs">
             <div>
-              <div className="text-zinc-500">compensation dispatch said</div>
+              <div className="text-faint">compensation dispatch said</div>
               {comp.dispatch ? (
                 <div className={`font-mono font-semibold ${stateClasses(comp.dispatch.outcome).text}`}>
-                  {comp.dispatch.outcome} <span className="text-zinc-400">HTTP {comp.dispatch.http_status ?? "—"}</span>
+                  {comp.dispatch.outcome} <span className="text-mute">HTTP {comp.dispatch.http_status ?? "—"}</span>
                 </div>
               ) : (
-                <div className="text-zinc-500">—</div>
+                <div className="text-faint">—</div>
               )}
-              {comp.dispatch?.error && <div className="font-mono text-[11px] text-red-300">{comp.dispatch.error}</div>}
+              {comp.dispatch?.error && <div className="font-mono text-xs text-bad">{comp.dispatch.error}</div>}
             </div>
             <div>
-              <div className="text-zinc-500">compensation verified</div>
+              <div className="text-faint">compensation verified</div>
               {comp.verification ? (
                 <>
                   <div className={`font-mono font-semibold ${stateClasses(comp.verification.status).text}`}>
                     {comp.verification.status}
                   </div>
-                  <div className="text-[11px] text-zinc-400">{comp.verification.reason}</div>
+                  <div className="text-xs text-mute">{comp.verification.reason}</div>
                 </>
               ) : (
-                <div className="text-red-300">not verified</div>
+                <div className="text-bad">not verified</div>
               )}
             </div>
           </div>
@@ -79,30 +79,30 @@ export function EffectInspector({ effect }: { effect: Effect | null }) {
       )}
 
       <div>
-        <div className="mb-1 text-[10px] font-semibold uppercase tracking-widest text-zinc-500">Attempts</div>
+        <div className="mb-1 text-xs font-semibold uppercase tracking-widest text-faint">Attempts</div>
         {effect.attempts.length === 0 ? (
-          <div className="text-xs text-zinc-500">No attempts recorded.</div>
+          <div className="text-xs text-faint">No attempts recorded.</div>
         ) : (
           <table className="w-full text-xs">
-            <thead className="text-zinc-500">
-              <tr className="border-b border-zinc-800 text-left">
-                <th className="py-1 font-medium">kind</th>
-                <th className="py-1 font-medium">#</th>
-                <th className="py-1 font-medium">status</th>
-                <th className="py-1 font-medium">http</th>
-                <th className="py-1 font-medium">error</th>
-                <th className="py-1 font-medium">started</th>
+            <thead className="text-faint">
+              <tr className="border-b border-line text-left">
+                <th className="py-1.5 pr-4 font-medium">kind</th>
+                <th className="py-1.5 pr-4 font-medium">#</th>
+                <th className="py-1.5 pr-4 font-medium">status</th>
+                <th className="py-1.5 pr-4 font-medium">http</th>
+                <th className="py-1.5 pr-4 font-medium">error</th>
+                <th className="py-1.5 pr-4 font-medium">started</th>
               </tr>
             </thead>
             <tbody>
               {effect.attempts.map((a, i) => (
-                <tr key={i} className="border-b border-zinc-900">
-                  <td className="py-1 font-mono">{a.kind}</td>
-                  <td className="py-1 font-mono">{a.attempt_no}</td>
-                  <td className={`py-1 font-mono ${stateClasses(a.status).text}`}>{a.status}</td>
-                  <td className="py-1 font-mono">{a.http_status ?? "—"}</td>
-                  <td className="py-1 font-mono text-red-300">{a.error ?? ""}</td>
-                  <td className="py-1 font-mono text-zinc-400">{fmtTime(a.started_at)}</td>
+                <tr key={i} className="border-b border-line">
+                  <td className="py-1.5 pr-4 font-mono">{a.kind}</td>
+                  <td className="py-1.5 pr-4 font-mono">{a.attempt_no}</td>
+                  <td className={`py-1.5 pr-4 font-mono ${stateClasses(a.status).text}`}>{a.status}</td>
+                  <td className="py-1.5 pr-4 font-mono">{a.http_status ?? "—"}</td>
+                  <td className="py-1.5 pr-4 font-mono text-bad">{a.error ?? ""}</td>
+                  <td className="py-1.5 pr-4 font-mono text-mute">{fmtTime(a.started_at)}</td>
                 </tr>
               ))}
             </tbody>
@@ -110,7 +110,7 @@ export function EffectInspector({ effect }: { effect: Effect | null }) {
         )}
       </div>
 
-      <div className="rounded-md border border-zinc-800 p-3">
+      <div className="neu-raised-md p-4">
         <KV k="operation_key">
           <Mono>{effect.operation_key}</Mono>
         </KV>
@@ -121,14 +121,14 @@ export function EffectInspector({ effect }: { effect: Effect | null }) {
           {effect.logical_operation ? (
             <span className="flex items-center gap-2">
               <StateBadge state={effect.logical_operation.status} size="xs" />
-              <Mono className="text-zinc-500">{shortId(effect.logical_operation.id)}</Mono>
+              <Mono className="text-faint">{shortId(effect.logical_operation.id)}</Mono>
             </span>
           ) : (
             "—"
           )}
         </KV>
         <KV k="reversibility">
-          <Mono className={effect.reversibility_class === "IRREVERSIBLE" ? "text-red-300" : ""}>{effect.reversibility_class}</Mono>
+          <Mono className={effect.reversibility_class === "IRREVERSIBLE" ? "text-bad" : ""}>{effect.reversibility_class}</Mono>
         </KV>
         <KV k="provider reference">
           <Mono>{effect.provider_reference ?? "—"}</Mono>
@@ -137,17 +137,17 @@ export function EffectInspector({ effect }: { effect: Effect | null }) {
           {effect.depends_on.length ? (
             effect.depends_on.map((d) => (
               <div key={d}>
-                <Mono className="text-zinc-400">{d}</Mono>
+                <Mono className="text-mute">{d}</Mono>
               </div>
             ))
           ) : (
-            <span className="text-zinc-500">none (level {effect.level})</span>
+            <span className="text-faint">none (level {effect.level})</span>
           )}
         </KV>
         <KV k="resource claims">
           {effect.resource_claims.map((c, i) => (
             <div key={i}>
-              <Mono className="text-zinc-400">{c.mode}</Mono> <Mono>{c.resource}</Mono>
+              <Mono className="text-mute">{c.mode}</Mono> <Mono>{c.resource}</Mono>
             </div>
           ))}
         </KV>
@@ -158,7 +158,7 @@ export function EffectInspector({ effect }: { effect: Effect | null }) {
         </KV>
         {effect.contract && (
           <KV k="contract">
-            <Mono className="text-zinc-400">
+            <Mono className="text-mute">
               {effect.contract.adapter_name} · verify={effect.contract.verification_strategy} · compensate=
               {effect.contract.compensation_strategy}
             </Mono>
@@ -166,11 +166,11 @@ export function EffectInspector({ effect }: { effect: Effect | null }) {
         )}
         <div className="mt-2 grid grid-cols-1 gap-2 xl:grid-cols-2">
           <div>
-            <div className="text-[10px] text-zinc-500">payload</div>
+            <div className="text-xs text-faint">payload</div>
             <JsonView value={effect.payload} maxHeight={160} />
           </div>
           <div>
-            <div className="text-[10px] text-zinc-500">prepare_evidence</div>
+            <div className="text-xs text-faint">prepare_evidence</div>
             <JsonView value={effect.prepare_evidence} maxHeight={160} />
           </div>
         </div>

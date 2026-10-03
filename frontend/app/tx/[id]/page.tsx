@@ -32,21 +32,21 @@ function TransactionView({ id }: { id: string }) {
   if (error && !detail) {
     return (
       <div className="space-y-3">
-        <Link href="/" className="text-xs text-zinc-400 hover:text-zinc-200">
+        <Link href="/" className="text-xs text-mute hover:text-ink">
           ← all transactions
         </Link>
         <ErrorBox title={`Cannot load transaction ${id}`} message={`${error.code}: ${error.message}`} />
       </div>
     );
   }
-  if (!detail) return <div className="text-sm text-zinc-500">Loading transaction {id}…</div>;
+  if (!detail) return <div className="text-sm text-faint">Loading transaction {id}…</div>;
 
   const selected = detail.effects.find((e) => e.id === selectedId) ?? pickDefaultEffect(detail.effects);
   const failedInv = detail.invariants.filter((i) => i.evaluations.length && !i.evaluations[i.evaluations.length - 1].passed).length;
 
   return (
     <div className="space-y-4">
-      <Link href="/" className="text-xs text-zinc-400 hover:text-zinc-200">
+      <Link href="/" className="text-xs text-mute hover:text-ink">
         ← all transactions
       </Link>
       {error && <ErrorBox title="Refresh failed (showing last known state)" message={`${error.code}: ${error.message}`} />}
@@ -69,8 +69,8 @@ function TransactionView({ id }: { id: string }) {
         </Card>
       </div>
 
-      <section className="rounded-lg border border-zinc-800 bg-zinc-900/60">
-        <div className="px-4 pt-2">
+      <section className="neu-raised">
+        <div className="px-5 pt-5">
           <Tabs<TabKey>
             active={tab}
             onChange={setTab}

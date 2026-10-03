@@ -24,15 +24,15 @@ export function CommitBarrierPanel({ detail }: { detail: TransactionDetail }) {
   if (!decision) {
     return (
       <Card title="Global commit barrier">
-        <div className="text-sm text-zinc-500">No barrier evaluation recorded yet.</div>
+        <div className="text-sm text-faint">No barrier evaluation recorded yet.</div>
       </Card>
     );
   }
 
   const failed = decision.checks.filter((c) => !c.passed);
   const verdictCls = decision.eligible
-    ? "border-emerald-600 bg-emerald-950/40 text-emerald-300"
-    : "border-red-600 bg-red-950/40 text-red-300";
+    ? "border-emerald-600 text-ok"
+    : "border-red-600 text-bad";
 
   return (
     <Card
@@ -46,20 +46,20 @@ export function CommitBarrierPanel({ detail }: { detail: TransactionDetail }) {
       }
       right={
         isDryRun ? (
-          <span className="rounded bg-zinc-800 px-2 py-0.5 font-mono text-[10px] uppercase text-zinc-300">dry-run</span>
+          <span className="neu-tag px-2.5 py-1 font-mono text-xs uppercase text-ink-soft">dry-run</span>
         ) : null
       }
     >
-      <div className={`rounded-md border-2 px-4 py-3 ${verdictCls}`}>
-        <div className="text-xs uppercase tracking-widest opacity-80">Global commit</div>
+      <div className={`neu-inset border-l-8 px-6 py-4 ${verdictCls}`}>
+        <div className="text-xs uppercase tracking-widest">Global commit</div>
         <div className="text-2xl font-bold tracking-wide">{decision.eligible ? "ELIGIBLE" : "BLOCKED"}</div>
-        <div className="mt-1 text-xs text-zinc-300">
+        <div className="mt-1 text-xs text-ink-soft">
           {decision.checks.length - failed.length}/{decision.checks.length} checks passed
           {decision.blocking_reasons.length > 0 && (
             <>
               {" · "}blocking:{" "}
               {decision.blocking_reasons.map((r) => (
-                <Mono key={r} className="mr-2 rounded bg-red-900/60 px-1.5 py-0.5 text-red-100">
+                <Mono key={r} className="neu-tag mr-2 inline-block px-2 py-0.5 font-semibold text-bad">
                   {r}
                 </Mono>
               ))}
@@ -74,18 +74,18 @@ export function CommitBarrierPanel({ detail }: { detail: TransactionDetail }) {
         .map((c, i) => {
           const ex = exposureOf(c.observed)!;
           return (
-            <div key={`ex-${i}`} className={`mt-3 rounded-md border p-3 pt-5 ${c.passed ? "border-zinc-800" : "border-red-800 bg-red-950/20"}`}>
+            <div key={`ex-${i}`} className={`neu-inset mt-4 p-4 pt-6 ${c.passed ? "" : "border-l-4 border-red-600"}`}>
               <div className="mb-3 flex items-center gap-2 text-xs">
                 <PassMark passed={c.passed} />
-                <Mono className="font-semibold text-zinc-100">{c.code}</Mono>
-                <span className="text-zinc-400">{c.subject}</span>
+                <Mono className="font-semibold text-ink">{c.code}</Mono>
+                <span className="text-mute">{c.subject}</span>
               </div>
               <ExposureBar contributions={ex.contributions} exposure={ex.exposure} limit={ex.limit} />
             </div>
           );
         })}
 
-      <div className="mt-3 max-h-[380px] overflow-y-auto pr-1">
+      <div className="mt-4 max-h-[380px] overflow-y-auto pr-2">
         <table className="w-full text-xs">
           <tbody>
             {decision.checks.map((c, i) => (
@@ -94,7 +94,7 @@ export function CommitBarrierPanel({ detail }: { detail: TransactionDetail }) {
           </tbody>
         </table>
       </div>
-      {decision.explanation && <p className="mt-3 text-xs text-zinc-400">{decision.explanation}</p>}
+      {decision.explanation && <p className="mt-3 text-xs text-mute">{decision.explanation}</p>}
     </Card>
   );
 }
@@ -102,18 +102,18 @@ export function CommitBarrierPanel({ detail }: { detail: TransactionDetail }) {
 function CheckRow({ c }: { c: BarrierCheck }) {
   const hasObserved = c.observed && typeof c.observed === "object" && Object.keys(c.observed as object).length > 0;
   return (
-    <tr className={`border-b border-zinc-800/70 align-top ${c.passed ? "" : "bg-red-950/40"}`}>
+    <tr className={`border-b border-line/70 align-top ${c.passed ? "" : "bg-red-500/10"}`}>
       <td className="w-5 py-1.5 pl-1">
         <PassMark passed={c.passed} />
       </td>
       <td className="py-1.5 pr-2">
-        <Mono className={c.passed ? "text-zinc-300" : "font-semibold text-red-200"}>{c.code}</Mono>
-        {c.subject && <div className="font-mono text-[10px] text-zinc-500 break-all">{c.subject}</div>}
+        <Mono className={c.passed ? "text-ink-soft" : "font-semibold text-bad"}>{c.code}</Mono>
+        {c.subject && <div className="font-mono text-xs text-faint break-all">{c.subject}</div>}
       </td>
       <td className="py-1.5">
-        <div className={c.passed ? "text-zinc-400" : "text-red-100"}>{c.detail}</div>
+        <div className={c.passed ? "text-mute" : "text-bad"}>{c.detail}</div>
         {c.blocking_reason && (
-          <Mono className="mt-0.5 inline-block rounded bg-red-900/70 px-1.5 text-[11px] text-red-100">{c.blocking_reason}</Mono>
+          <Mono className="neu-tag mt-1 inline-block px-2 py-0.5 text-xs font-semibold text-bad">{c.blocking_reason}</Mono>
         )}
         {hasObserved && (
           <Expandable label="observed">

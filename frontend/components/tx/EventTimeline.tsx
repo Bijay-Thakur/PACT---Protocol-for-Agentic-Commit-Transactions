@@ -68,7 +68,7 @@ export function EventTimeline({ events, detail }: { events: PactEvent[]; detail:
 
   return (
     <div>
-      <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px]">
+      <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
         {CATS.map((c) => (
           <button
             key={c}
@@ -81,19 +81,20 @@ export function EventTimeline({ events, detail }: { events: PactEvent[]; detail:
                 return n;
               })
             }
-            className={`rounded border-l-4 bg-zinc-900 px-2 py-0.5 ${CATEGORY_CLASSES[c]} ${hidden.has(c) ? "opacity-30" : ""}`}
+            aria-pressed={!hidden.has(c)}
+            className={`neu-btn !rounded-lg border-l-4 px-2.5 py-1 ${CATEGORY_CLASSES[c]} ${hidden.has(c) ? "opacity-60" : ""}`}
           >
             {c}
           </button>
         ))}
-        <label className="ml-2 flex items-center gap-1 text-zinc-400">
+        <label className="ml-2 flex items-center gap-1 text-mute">
           <input type="checkbox" checked={onlyKey} onChange={(e) => setOnlyKey(e.target.checked)} /> key events only
         </label>
-        <span className="ml-auto text-zinc-500">
+        <span className="ml-auto text-faint">
           {shown.length}/{events.length} durable events
         </span>
       </div>
-      <div className="max-h-[640px] overflow-y-auto rounded border border-zinc-800">
+      <div className="neu-inset max-h-[640px] overflow-y-auto">
         <table className="w-full text-xs">
           <tbody>
             {shown.map((e) => {
@@ -103,15 +104,15 @@ export function EventTimeline({ events, detail }: { events: PactEvent[]; detail:
               return (
                 <tr
                   key={e.sequence}
-                  className={`border-b border-zinc-900 align-top ${hl ? "bg-zinc-800/60" : ""}`}
+                  className={`border-b border-line align-top ${hl ? "bg-white/50" : ""}`}
                 >
-                  <td className={`w-14 border-l-4 py-1 pl-2 font-mono text-zinc-500 ${CATEGORY_CLASSES[cat]}`}>{e.sequence}</td>
-                  <td className="w-24 py-1 font-mono text-zinc-500">{fmtTime(e.created_at)}</td>
+                  <td className={`w-14 border-l-4 py-1 pl-2 font-mono text-faint ${CATEGORY_CLASSES[cat]}`}>{e.sequence}</td>
+                  <td className="w-24 py-1 font-mono text-faint">{fmtTime(e.created_at)}</td>
                   <td className="py-1 pr-2">
                     <div className={`font-mono font-semibold ${CATEGORY_CLASSES[cat].split(" ")[0]} ${hl ? "underline decoration-2 underline-offset-2" : ""}`}>
                       {e.event_type}
                     </div>
-                    <div className="text-[10px] text-zinc-500">
+                    <div className="text-xs text-faint">
                       {e.actor}
                       {actorByTx.get(e.transaction_id) && actorByTx.get(e.transaction_id) !== e.actor && (
                         <> · tx {actorByTx.get(e.transaction_id)}</>
@@ -119,8 +120,8 @@ export function EventTimeline({ events, detail }: { events: PactEvent[]; detail:
                     </div>
                   </td>
                   <td className="py-1 pr-2">
-                    <div className="text-zinc-300">{summarize(e)}</div>
-                    {typeof p?.operation_key === "string" && <Mono className="text-[10px] text-zinc-500">{p.operation_key}</Mono>}
+                    <div className="text-ink-soft">{summarize(e)}</div>
+                    {typeof p?.operation_key === "string" && <Mono className="text-xs text-faint">{p.operation_key}</Mono>}
                     <Expandable label="payload">
                       <JsonView value={e.payload} maxHeight={220} />
                     </Expandable>
@@ -130,7 +131,7 @@ export function EventTimeline({ events, detail }: { events: PactEvent[]; detail:
             })}
           </tbody>
         </table>
-        {events.length === 0 && <div className="p-4 text-sm text-zinc-500">Waiting for events…</div>}
+        {events.length === 0 && <div className="p-4 text-sm text-faint">Waiting for events…</div>}
       </div>
     </div>
   );

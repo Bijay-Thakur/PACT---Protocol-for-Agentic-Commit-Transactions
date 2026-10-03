@@ -44,34 +44,34 @@ export function TxHeader({
     act(label, () => api.operatorAction(tx.id, { operator_id: operatorId, action, note }));
 
   const btn =
-    "rounded px-3 py-1.5 text-xs font-semibold disabled:opacity-50 disabled:cursor-not-allowed";
+    "neu-btn px-4 py-2 text-xs";
 
   return (
-    <section className="rounded-lg border border-zinc-800 bg-zinc-900/60 p-4">
+    <section className="neu-raised p-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-3">
             <StateBadge state={tx.state} size="lg" />
-            <span className="text-xs text-zinc-500">root transaction</span>
+            <span className="text-xs text-faint">root transaction</span>
             <LiveIndicator mode={mode} lastUpdate={lastUpdate} />
           </div>
-          <h1 className="mt-2 text-lg font-semibold leading-snug text-zinc-50">{tx.objective}</h1>
-          <div className="mt-2 flex flex-wrap gap-x-6 gap-y-1 text-xs text-zinc-400">
+          <h1 className="mt-2 text-lg font-semibold leading-snug text-ink">{tx.objective}</h1>
+          <div className="mt-2 flex flex-wrap gap-x-6 gap-y-1 text-xs text-mute">
             <span>
-              root <Mono className="text-zinc-200">{tx.id}</Mono>
+              root <Mono className="text-ink">{tx.id}</Mono>
             </span>
             <span>
-              customer <Mono className="text-zinc-200">{detail.metadata.customer_id ?? "—"}</Mono>
+              customer <Mono className="text-ink">{detail.metadata.customer_id ?? "—"}</Mono>
             </span>
             <span>
-              scenario <Mono className="text-zinc-200">{detail.metadata.scenario ?? "—"}</Mono>
+              scenario <Mono className="text-ink">{detail.metadata.scenario ?? "—"}</Mono>
             </span>
             <span>
-              actor <Mono className="text-zinc-200">{tx.actor_id}</Mono>
+              actor <Mono className="text-ink">{tx.actor_id}</Mono>
             </span>
             <span>events {detail.event_count}</span>
             <span>
-              policy <Mono className="text-zinc-300">
+              policy <Mono className="text-ink-soft">
                 on_unknown={detail.policy.on_unknown} · on_failure={detail.policy.on_effect_failure} · on_comp_failure=
                 {detail.policy.on_compensation_failure}
               </Mono>
@@ -81,7 +81,7 @@ export function TxHeader({
         <div className="flex flex-col items-end gap-2">
           <Link
             href={`/tx/${tx.id}/receipt`}
-            className="rounded border border-teal-700 px-3 py-1.5 text-xs font-semibold text-teal-300 hover:bg-teal-900/30"
+            className="neu-btn px-4 py-2 text-xs text-evidence"
           >
             {tx.receipt_hash ? "View receipt" : "View receipt (draft)"}
           </Link>
@@ -90,36 +90,36 @@ export function TxHeader({
 
       {/* State-dependent actions */}
       {tx.state === "PREPARED" && (
-        <div className="mt-4 flex items-center gap-3 rounded-md border border-zinc-700 bg-zinc-950/60 p-3">
+        <div className="neu-inset mt-5 flex items-center gap-4 p-4">
           <button
-            className={`${btn} bg-indigo-600 text-white hover:bg-indigo-500`}
+            className={`${btn} neu-btn-primary`}
             disabled={!!busy}
             onClick={() => act("Commit", () => api.commit(tx.id, { step_delay_ms: 400, background: true }))}
           >
             {busy === "Commit" ? "Committing…" : "Commit"}
           </button>
-          <span className="text-xs text-zinc-400">
+          <span className="text-xs text-mute">
             Evaluates the global commit barrier; execution proceeds only if every check passes.
           </span>
         </div>
       )}
       {tx.state === "UNKNOWN" && (
-        <div className="mt-4 flex items-center gap-3 rounded-md border border-amber-700/60 bg-amber-950/30 p-3">
+        <div className="neu-inset mt-5 flex items-center gap-4 border-l-4 border-amber-700 p-4">
           <button
-            className={`${btn} bg-amber-600 text-black hover:bg-amber-500`}
+            className={`${btn} text-warn`}
             disabled={!!busy}
             onClick={() => act("Reconcile", () => api.reconcile(tx.id))}
           >
             {busy === "Reconcile" ? "Reconciling…" : "Reconcile"}
           </button>
-          <span className="text-xs text-amber-200">
+          <span className="text-xs text-warn">
             PACT will query the provider by operation identity — it will NOT re-send the refund.
           </span>
         </div>
       )}
       {tx.state === "HUMAN_REQUIRED" && (
-        <div className="mt-4 rounded-md border border-orange-700/60 bg-orange-950/30 p-3">
-          <div className="mb-2 text-xs text-orange-200">
+        <div className="neu-inset mt-5 border-l-4 border-orange-700 p-4">
+          <div className="mb-2 text-xs text-escalate">
             PACT could not reach a safe terminal state automatically. An accountable operator must decide; every action is
             recorded on the receipt.
           </div>
@@ -127,24 +127,24 @@ export function TxHeader({
             <input
               value={operatorId}
               onChange={(e) => setOperatorId(e.target.value)}
-              className="w-32 rounded border border-zinc-700 bg-zinc-900 px-2 py-1 font-mono text-xs"
+              className="neu-field w-32 px-3 py-2 font-mono text-xs"
               placeholder="operator id"
             />
             <input
               value={note}
               onChange={(e) => setNote(e.target.value)}
-              className="min-w-[240px] flex-1 rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs"
+              className="neu-field min-w-[240px] flex-1 px-3 py-2 text-xs"
               placeholder="note (recorded on the receipt)"
             />
-            <button className={`${btn} bg-sky-700 text-white hover:bg-sky-600`} disabled={!!busy || !operatorId}
+            <button className={`${btn} text-info`} disabled={!!busy || !operatorId}
               onClick={op("RETRY_COMPENSATION", "Retry compensation")}>
               Retry compensation
             </button>
-            <button className={`${btn} bg-amber-700 text-white hover:bg-amber-600`} disabled={!!busy || !operatorId}
+            <button className={`${btn} text-warn`} disabled={!!busy || !operatorId}
               onClick={op("RETRY_RECONCILIATION", "Retry reconciliation")}>
               Retry reconciliation
             </button>
-            <button className={`${btn} bg-red-700 text-white hover:bg-red-600`} disabled={!!busy || !operatorId}
+            <button className={`${btn} text-bad`} disabled={!!busy || !operatorId}
               onClick={op("FINALIZE_FAILED", "Finalize as failed")}>
               Finalize as failed
             </button>
@@ -152,7 +152,7 @@ export function TxHeader({
         </div>
       )}
       {result && (
-        <div className={`mt-3 rounded px-3 py-2 text-xs ${result.ok ? "bg-zinc-800 text-zinc-200" : "bg-red-950/60 text-red-200"}`}>
+        <div className={`neu-inset-sm mt-4 px-4 py-2.5 text-xs ${result.ok ? "text-ink" : "border-l-4 border-red-600 text-bad"}`}>
           {result.text}
         </div>
       )}
@@ -162,9 +162,9 @@ export function TxHeader({
 
 function LiveIndicator({ mode, lastUpdate }: { mode: LiveMode; lastUpdate: number | null }) {
   const label = mode === "sse" ? "live (SSE)" : mode === "polling" ? "polling 2s" : "connecting";
-  const color = mode === "sse" ? "bg-emerald-400" : mode === "polling" ? "bg-amber-400" : "bg-zinc-500";
+  const color = mode === "sse" ? "bg-emerald-600" : mode === "polling" ? "bg-amber-700" : "bg-slate-500";
   return (
-    <span className="flex items-center gap-1.5 text-[11px] text-zinc-500">
+    <span className="flex items-center gap-1.5 text-xs text-faint">
       <span className={`h-2 w-2 rounded-full ${color} ${mode === "sse" ? "animate-pulse" : ""}`} />
       {label}
       {lastUpdate && <span className="font-mono">· updated {fmtTime(new Date(lastUpdate).toISOString())}</span>}

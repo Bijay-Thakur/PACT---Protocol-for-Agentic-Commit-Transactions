@@ -36,28 +36,24 @@ export function HierarchyPanel({ detail, events }: { detail: TransactionDetail; 
       title="Agent hierarchy · local vs global validity"
       subtitle="Each child agent prepares its own sub-transaction. Local PREPARED does not authorize execution — only the global barrier does."
     >
-      <div className="mb-3 grid grid-cols-2 gap-2 text-xs">
-        <div className="rounded border border-zinc-700 bg-zinc-950/50 px-3 py-2">
-          <div className="text-zinc-500">children locally prepared</div>
-          <div className="text-lg font-semibold text-zinc-100">
+      <div className="mb-4 grid grid-cols-2 gap-4 text-xs">
+        <div className="neu-inset px-3 py-2">
+          <div className="text-faint">children locally prepared</div>
+          <div className="text-lg font-semibold text-ink">
             {preparedCount}/{children.length}
           </div>
         </div>
         <div
-          className={`rounded border px-3 py-2 ${
-            !decision
-              ? "border-zinc-700"
-              : decision.eligible
-                ? "border-emerald-700 bg-emerald-950/30"
-                : "border-red-700 bg-red-950/30"
+          className={`neu-inset px-3 py-2 ${
+            !decision ? "" : decision.eligible ? "border-l-4 border-emerald-600" : "border-l-4 border-red-600"
           }`}
         >
-          <div className="text-zinc-500">global barrier verdict{detail.commit_decisions.length ? "" : " (dry-run)"}</div>
-          <div className={`text-lg font-semibold ${!decision ? "text-zinc-400" : decision.eligible ? "text-emerald-300" : "text-red-300"}`}>
+          <div className="text-faint">global barrier verdict{detail.commit_decisions.length ? "" : " (dry-run)"}</div>
+          <div className={`text-lg font-semibold ${!decision ? "text-mute" : decision.eligible ? "text-ok" : "text-bad"}`}>
             {!decision ? "not evaluated" : decision.eligible ? "ELIGIBLE" : "BLOCKED"}
           </div>
           {decision && decision.blocking_reasons.length > 0 && (
-            <div className="font-mono text-[10px] text-red-200">{decision.blocking_reasons.join(" · ")}</div>
+            <div className="font-mono text-xs text-bad">{decision.blocking_reasons.join(" · ")}</div>
           )}
         </div>
       </div>
@@ -81,28 +77,28 @@ function Node({
   const effects = detail.effects.filter((e) => e.transaction_id === node.id);
   const preparedAt = prepared.get(node.id);
   return (
-    <div className={node.depth > 0 ? "ml-4 border-l border-zinc-700 pl-3" : ""}>
+    <div className={node.depth > 0 ? "ml-4 border-l-2 border-line pl-3" : ""}>
       <div className="flex flex-wrap items-center gap-2 py-1 text-xs">
-        <Mono className="font-semibold text-zinc-100">{node.actor_id}</Mono>
+        <Mono className="font-semibold text-ink">{node.actor_id}</Mono>
         <StateBadge state={node.state} size="xs" />
         {preparedAt ? (
-          <span className="rounded bg-emerald-900/40 px-1.5 text-[10px] text-emerald-300" title={`PREPARED at ${fmtTime(preparedAt)}`}>
+          <span className="neu-tag px-2 py-0.5 text-xs text-ok" title={`PREPARED at ${fmtTime(preparedAt)}`}>
             locally prepared ✓
           </span>
         ) : (
-          <span className="rounded bg-zinc-800 px-1.5 text-[10px] text-zinc-500">not locally prepared</span>
+          <span className="neu-tag px-2 py-0.5 text-xs text-faint">not locally prepared</span>
         )}
-        {!node.required && <span className="text-[10px] text-zinc-500">optional</span>}
-        {node.required && node.depth > 0 && <span className="text-[10px] text-zinc-500">required</span>}
-        <span className="text-[10px] text-zinc-500">
+        {!node.required && <span className="text-xs text-faint">optional</span>}
+        {node.required && node.depth > 0 && <span className="text-xs text-faint">required</span>}
+        <span className="text-xs text-faint">
           {node.effect_count} effect{node.effect_count === 1 ? "" : "s"}
         </span>
-        <Mono className="text-[10px] text-zinc-600">{shortId(node.id)}</Mono>
+        <Mono className="text-xs text-faint">{shortId(node.id)}</Mono>
       </div>
       {effects.length > 0 && (
         <div className="mb-1 ml-1 flex flex-wrap gap-1.5">
           {effects.map((e) => (
-            <span key={e.id} className="font-mono text-[10px] text-zinc-400">
+            <span key={e.id} className="font-mono text-xs text-mute">
               ↳ {e.effect_type}
               {e.amount ? ` ${money(e.amount)}` : ""}
             </span>

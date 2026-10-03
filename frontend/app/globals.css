@@ -1,30 +1,284 @@
 @import "tailwindcss";
 
+/*
+  Soft neumorphism design system.
+  One continuous surface colour; depth comes only from paired light/dark shadows.
+  Raised = extruded from the surface, inset = pressed into it.
+  State meaning is never carried by shadow alone — every state keeps a text label + coloured ink.
+*/
+
 @theme inline {
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, "Cascadia Mono", Menlo, Consolas, monospace;
+
+  /* Surface + ink. Contrast measured (WCAG) on #e4e9f1 and every tinted panel it hosts. */
+  --color-neu: #e4e9f1;
+  --color-ink: #121a30; /* 14.2:1 */
+  --color-ink-soft: #26314b; /* 10.6:1 */
+  --color-mute: #3b4762; /* 7.6:1 */
+  --color-faint: #475269; /* 6.4:1 — smallest allowed text tone */
+  --color-line: rgba(120, 134, 160, 0.34);
+  --color-accent: #1a3fa8; /* brand blue, 7.4:1 */
+
+  /* State ink: each >= 5.3:1 even on its own tinted alert panel. Meaning is always also carried by a text label. */
+  --color-ok: #05563f;
+  --color-bad: #991b1b;
+  --color-warn: #78350f;
+  --color-info: #064d73;
+  --color-escalate: #8c2f0e;
+  --color-run: #3730a3;
+  --color-evidence: #0f524e;
+  --color-barrier: #5b21b6;
+  --color-authority: #86198f;
+  --color-steel: #334155;
+
+  /* Readable type scale: nothing on screen is below 13px. */
+  --text-xs: 0.8125rem;
+  --text-xs--line-height: 1.3rem;
 }
 
 :root {
-  color-scheme: dark;
+  color-scheme: light;
+
+  --neu-bg: #e4e9f1;
+  --neu-bg-hi: #eaeff6;
+  --neu-bg-lo: #dce2ec;
+  --neu-dark: rgba(163, 177, 198, 0.78);
+  --neu-light: rgba(255, 255, 255, 0.95);
+  --neu-accent: #1b46b8;
+  --neu-accent-hi: #2459d6;
+  --neu-accent-lo: #173fa8;
+  --neu-focus: rgba(27, 70, 184, 0.7);
+
+  --neu-out-lg: 10px 10px 22px var(--neu-dark), -10px -10px 22px var(--neu-light);
+  --neu-out-md: 7px 7px 15px var(--neu-dark), -7px -7px 15px var(--neu-light);
+  --neu-out-sm: 4px 4px 9px var(--neu-dark), -4px -4px 9px var(--neu-light);
+  --neu-out-xs: 2px 2px 5px var(--neu-dark), -2px -2px 5px var(--neu-light);
+  --neu-in-md: inset 5px 5px 11px var(--neu-dark), inset -5px -5px 11px var(--neu-light);
+  --neu-in-sm: inset 3px 3px 7px var(--neu-dark), inset -3px -3px 7px var(--neu-light);
+  --neu-in-xs: inset 2px 2px 4px var(--neu-dark), inset -2px -2px 4px var(--neu-light);
+}
+
+html {
+  background: var(--neu-bg);
 }
 
 body {
   font-family: var(--font-sans);
+  background: var(--neu-bg);
+  color: var(--color-ink);
 }
 
-/* React Flow dark tweaks */
+::selection {
+  background: rgba(36, 89, 214, 0.25);
+}
+
+/* Soft scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(139, 153, 178, 0.55) transparent;
+}
+
+@layer components {
+  /* ---- Extruded surfaces ---- */
+  .neu-raised {
+    background: linear-gradient(145deg, var(--neu-bg-hi), var(--neu-bg-lo));
+    border-radius: 22px;
+    box-shadow: var(--neu-out-lg);
+  }
+  .neu-raised-md {
+    background: linear-gradient(145deg, var(--neu-bg-hi), var(--neu-bg-lo));
+    border-radius: 16px;
+    box-shadow: var(--neu-out-md);
+  }
+  .neu-raised-sm {
+    background: linear-gradient(145deg, var(--neu-bg-hi), var(--neu-bg-lo));
+    border-radius: 12px;
+    box-shadow: var(--neu-out-sm);
+  }
+
+  /* ---- Pressed-in surfaces (wells, code, fields) ---- */
+  .neu-inset {
+    background: var(--neu-bg);
+    border-radius: 14px;
+    box-shadow: var(--neu-in-md);
+  }
+  .neu-inset-sm {
+    background: var(--neu-bg);
+    border-radius: 10px;
+    box-shadow: var(--neu-in-sm);
+  }
+  .neu-chip {
+    background: var(--neu-bg);
+    border-radius: 999px;
+    box-shadow: var(--neu-in-xs);
+  }
+  .neu-tag {
+    background: var(--neu-bg);
+    border-radius: 8px;
+    box-shadow: var(--neu-in-xs);
+  }
+
+  /* ---- Interactive ---- */
+  .neu-btn {
+    background: linear-gradient(145deg, var(--neu-bg-hi), var(--neu-bg-lo));
+    border-radius: 14px;
+    box-shadow: var(--neu-out-sm);
+    color: var(--color-ink-soft);
+    font-weight: 600;
+    cursor: pointer;
+    transition:
+      box-shadow 0.18s ease,
+      transform 0.18s ease,
+      color 0.18s ease;
+  }
+  .neu-btn:hover:not(:disabled):not([aria-disabled="true"]) {
+    box-shadow: var(--neu-out-md);
+    transform: translateY(-1px);
+  }
+  .neu-btn:active:not(:disabled):not([aria-disabled="true"]) {
+    background: var(--neu-bg);
+    box-shadow: var(--neu-in-sm);
+    transform: translateY(0);
+  }
+  .neu-btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.62;
+    box-shadow: var(--neu-out-xs);
+  }
+
+  .neu-btn-primary {
+    background: linear-gradient(145deg, var(--neu-accent-hi), var(--neu-accent-lo));
+    color: #fff;
+    box-shadow:
+      5px 5px 12px rgba(27, 70, 184, 0.35),
+      -4px -4px 10px var(--neu-light);
+  }
+  .neu-btn-primary:hover:not(:disabled) {
+    box-shadow:
+      7px 7px 16px rgba(27, 70, 184, 0.4),
+      -5px -5px 12px var(--neu-light);
+  }
+  .neu-btn-primary:active:not(:disabled) {
+    background: linear-gradient(145deg, var(--neu-accent-lo), var(--neu-accent));
+    box-shadow:
+      inset 3px 3px 7px rgba(10, 25, 90, 0.6),
+      inset -3px -3px 6px rgba(90, 135, 245, 0.5);
+  }
+
+  .neu-field {
+    background: var(--neu-bg);
+    border-radius: 12px;
+    box-shadow: var(--neu-in-sm);
+    color: var(--color-ink);
+    transition: box-shadow 0.18s ease;
+  }
+  .neu-field::placeholder {
+    color: var(--color-faint);
+  }
+
+  /* Segmented tab bar: inset track, raised active tab */
+  .neu-tabs {
+    background: var(--neu-bg);
+    border-radius: 16px;
+    box-shadow: var(--neu-in-sm);
+    padding: 6px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .neu-tab {
+    border-radius: 12px;
+    color: var(--color-mute);
+    font-weight: 500;
+    transition:
+      box-shadow 0.18s ease,
+      color 0.18s ease,
+      background 0.18s ease;
+  }
+  .neu-tab:hover {
+    color: var(--color-ink);
+  }
+  .neu-tab[aria-selected="true"] {
+    background: linear-gradient(145deg, var(--neu-bg-hi), var(--neu-bg-lo));
+    box-shadow: var(--neu-out-sm);
+    color: var(--color-accent);
+    font-weight: 700;
+  }
+
+  /* Hairline divider that sits inside the surface instead of drawing a hard border */
+  .neu-divider {
+    height: 2px;
+    border-radius: 2px;
+    background: var(--neu-bg);
+    box-shadow:
+      inset 1px 1px 2px var(--neu-dark),
+      inset -1px -1px 2px var(--neu-light);
+  }
+}
+
+/* Keyboard focus: neumorphism hides edges, so focus needs an explicit ring */
+:where(a, button, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--neu-focus);
+  outline-offset: 3px;
+}
+.neu-field:focus-visible {
+  outline: none;
+  box-shadow:
+    var(--neu-in-sm),
+    0 0 0 2px var(--neu-focus);
+}
+
+input[type="checkbox"] {
+  accent-color: var(--neu-accent);
+  width: 15px;
+  height: 15px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .neu-btn,
+  .neu-tab,
+  .neu-field {
+    transition: none;
+  }
+  .neu-btn:hover:not(:disabled) {
+    transform: none;
+  }
+}
+
+/* React Flow, light + neumorphic */
+.react-flow {
+  --xy-background-color: transparent;
+  --xy-background-color-default: transparent;
+  --xy-edge-stroke-default: #94a3b8;
+}
 .react-flow__attribution {
   background: transparent !important;
 }
 .react-flow__attribution a {
-  color: #52525b !important;
+  color: #475269 !important;
+}
+.react-flow__controls {
+  box-shadow: none !important;
+  display: flex;
+  gap: 8px;
 }
 .react-flow__controls button {
-  background: #18181b;
-  border-bottom-color: #27272a;
-  fill: #d4d4d8;
+  background: linear-gradient(145deg, var(--neu-bg-hi), var(--neu-bg-lo));
+  border: none !important;
+  border-radius: 10px;
+  box-shadow: var(--neu-out-xs);
+  fill: #26314b;
+  width: 28px;
+  height: 28px;
 }
 .react-flow__controls button:hover {
-  background: #27272a;
+  background: var(--neu-bg);
+  box-shadow: var(--neu-in-xs);
+}
+.react-flow__controls button:disabled {
+  opacity: 0.5;
+}
+.react-flow__handle {
+  border: 2px solid var(--neu-bg) !important;
 }

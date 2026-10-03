@@ -20,8 +20,8 @@ import { money } from "@/lib/format";
 type EffectNodeData = { effect: Effect; selected: boolean };
 type EffectNode = Node<EffectNodeData, "effect">;
 
-const COL_W = 228;
-const ROW_H = 96;
+const COL_W = 276;
+const ROW_H = 118;
 
 function EffectNodeView({ data }: NodeProps<EffectNode>) {
   const e = data.effect;
@@ -30,24 +30,24 @@ function EffectNodeView({ data }: NodeProps<EffectNode>) {
   const verify = e.verification_result?.status;
   return (
     <div
-      className={`w-[196px] rounded-md border-2 bg-zinc-900 px-2.5 py-1.5 text-left shadow ${c.border} ${
-        data.selected ? "ring-2 ring-white/80" : ""
+      className={`w-[240px] rounded-xl border-l-4 px-3 py-2 text-left ${c.border} ${
+        data.selected ? "neu-inset outline-2 outline-offset-2 outline-indigo-600" : "neu-raised-sm"
       } ${isInFlight(e.state) ? "animate-pulse" : ""}`}
     >
-      <Handle type="target" position={Position.Left} className="!bg-zinc-500" />
-      <div className="font-mono text-[12px] font-semibold text-zinc-100">{e.effect_type}</div>
-      <div className="font-mono text-[10px] text-zinc-400">
+      <Handle type="target" position={Position.Left} className="!bg-slate-500" />
+      <div className="font-mono text-[13px] font-semibold text-ink">{e.effect_type}</div>
+      <div className="font-mono text-xs text-mute">
         {e.actor_id}
         {e.amount ? ` · ${money(e.amount)}` : ""}
       </div>
-      <div className={`mt-0.5 font-mono text-[11px] font-semibold ${c.text}`}>{e.state}</div>
+      <div className={`mt-0.5 font-mono text-xs font-semibold ${c.text}`}>{e.state}</div>
       {(dispatch || verify) && (
-        <div className="mt-0.5 flex gap-1 font-mono text-[9px]">
+        <div className="mt-0.5 flex flex-wrap gap-x-2 font-mono text-xs">
           {dispatch && <span className={stateClasses(dispatch).text}>said:{dispatch}</span>}
           {verify && <span className={stateClasses(verify).text}>real:{verify.replace("VERIFIED_", "")}</span>}
         </div>
       )}
-      <Handle type="source" position={Position.Right} className="!bg-zinc-500" />
+      <Handle type="source" position={Position.Right} className="!bg-slate-500" />
     </div>
   );
 }
@@ -87,7 +87,7 @@ export function EffectDag({
       const dst = byId.get(ed.to);
       const waiting =
         txLive && !!dst && ["PREPARED", "VALIDATED"].includes(dst.state) && !!src && src.state !== "VERIFIED" && src.state !== "ABORTED";
-      const color = src ? stateClasses(src.state).hex : "#71717a";
+      const color = src ? stateClasses(src.state).hex : "#7b879d";
       return {
         id: `${ed.from}->${ed.to}`,
         source: ed.from,
@@ -101,11 +101,11 @@ export function EffectDag({
   }, [detail, selectedId]);
 
   if (!detail.effects.length) {
-    return <div className="p-6 text-sm text-zinc-500">No effects proposed in this transaction tree.</div>;
+    return <div className="p-6 text-sm text-faint">No effects proposed in this transaction tree.</div>;
   }
 
   return (
-    <div style={{ height }} className="w-full">
+    <div style={{ height }} className="neu-inset w-full overflow-hidden">
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -115,12 +115,12 @@ export function EffectDag({
         fitViewOptions={{ padding: 0.15 }}
         nodesConnectable={false}
         nodesDraggable={false}
-        colorMode="dark"
+        colorMode="light"
         proOptions={{ hideAttribution: true }}
         minZoom={0.3}
         maxZoom={1.6}
       >
-        <Background color="#27272a" gap={20} />
+        <Background color="#b8c2d3" gap={22} />
         <Controls showInteractive={false} />
       </ReactFlow>
     </div>
