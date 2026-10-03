@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+.env
+node_modules/
+frontend/.next/
+frontend/out/
+.env.example
+docker-compose.override.yml
+PACT_Concrete_System_Build_Plan.md
+PACT_Master_Build_Prompt.md
+

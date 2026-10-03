@@ -1,0 +1,94 @@
+"use client";
+
+import { useState } from "react";
+import Link from "next/link";
+import { useParams } from "next/navigation";
+import { useTransactionLive } from "@/lib/useTransactionLive";
+import { Card, ErrorBox, Tabs } from "@/components/ui";
+import { TxHeader } from "@/components/tx/TxHeader";
+import { CommitBarrierPanel } from "@/components/tx/CommitBarrierPanel";
+import { HierarchyPanel } from "@/components/tx/HierarchyPanel";
+import { EffectDag } from "@/components/tx/EffectDag";
+import { EffectInspector, pickDefaultEffect } from "@/components/tx/EffectInspector";
+import { AuthorityPanel } from "@/components/tx/AuthorityPanel";
+import { InvariantsPanel } from "@/components/tx/InvariantsPanel";
+import { ExternalRealityPanel } from "@/components/tx/ExternalRealityPanel";
+import { EventTimeline } from "@/components/tx/EventTimeline";
+
+type TabKey = "events" | "external" | "invariants" | "authority";
+
+export default function TransactionPage() {
+  const params = useParams<{ id: string }>();
+  const id = params?.id;
+  if (!id) return null;
+  return <TransactionView key={id} id={id} />;
+}
+
+function TransactionView({ id }: { id: string }) {
+  const { detail, events, error, mode, lastUpdate, refetch } = useTransactionLive(id);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [tab, setTab] = useState<TabKey>("events");
+
+  if (error && !detail) {
+    return (
+      <div className="space-y-3">
+        <Link href="/" className="text-xs text-zinc-400 hover:text-zinc-200">
+          ← all transactions
+        </Link>
+        <ErrorBox title={`Cannot load transaction ${id}`} message={`${error.code}: ${error.message}`} />
+      </div>
+    );
+  }
+  if (!detail) return <div className="text-sm text-zinc-500">Loading transaction {id}…</div>;
+
+  const selected = detail.effects.find((e) => e.id === selectedId) ?? pickDefaultEffect(detail.effects);
+  const failedInv = detail.invariants.filter((i) => i.evaluations.length && !i.evaluations[i.evaluations.length - 1].passed).length;
+
+  return (
+    <div className="space-y-4">
+      <Link href="/" className="text-xs text-zinc-400 hover:text-zinc-200">
+        ← all transactions
+      </Link>
+      {error && <ErrorBox title="Refresh failed (showing last known state)" message={`${error.code}: ${error.message}`} />}
+      <TxHeader detail={detail} mode={mode} lastUpdate={lastUpdate} onChanged={refetch} />
+
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]">
+        <CommitBarrierPanel detail={detail} />
+        <HierarchyPanel detail={detail} events={events} />
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
+        <Card
+          title="Effect DAG"
+          subtitle="Execution order by dependency level. Dependents wait for prerequisites to be VERIFIED, not merely dispatched. Click a node to inspect."
+        >
+          <EffectDag detail={detail} selectedId={selected?.id ?? null} onSelect={setSelectedId} />
+        </Card>
+        <Card title="Effect inspector" subtitle="What the provider said vs. what independent verification found">
+          <EffectInspector effect={selected} />
+        </Card>
+      </div>
+
+      <section className="rounded-lg border border-zinc-800 bg-zinc-900/60">
+        <div className="px-4 pt-2">
+          <Tabs<TabKey>
+            active={tab}
+            onChange={setTab}
+            tabs={[
+              { key: "events", label: `Event timeline (${events.length})` },
+              { key: "external", label: "External reality" },
+              { key: "invariants", label: `Invariants${failedInv ? ` · ${failedInv} failed` : ""}` },
+              { key: "authority", label: "Authority" },
+            ]}
+          />
+        </div>
+        <div className="p-4">
+          {tab === "events" && <EventTimeline events={events} detail={detail} />}
+          {tab === "external" && <ExternalRealityPanel customerId={detail.metadata.customer_id} refreshKey={detail.event_count} />}
+          {tab === "invariants" && <InvariantsPanel detail={detail} />}
+          {tab === "authority" && <AuthorityPanel detail={detail} />}
+        </div>
+      </section>
+    </div>
+  );
+}

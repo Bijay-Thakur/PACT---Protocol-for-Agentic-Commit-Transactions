@@ -1,0 +1,68 @@
+name: pact
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-pact}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pact}
+      POSTGRES_DB: pact
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docker/postgres-init.sql:/docker-entrypoint-initdb.d/10-pact-sim.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-pact} -d pact"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  # Simulated external systems (billing, subscription, identity, CRM, notification).
+  # A separate service with a separate database: PACT can only reach them over HTTP.
+  simulators:
+    build: ./backend
+    command: ["uvicorn", "app.simulators.app:app", "--host", "0.0.0.0", "--port", "8100"]
+    environment:
+      PACT_SIM_STANDALONE: "1"
+      PACT_SIM_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-pact}:${POSTGRES_PASSWORD:-pact}@postgres:5432/pact_sim
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8100:8100"
+
+  backend:
+    build: ./backend
+    environment:
+      PACT_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-pact}:${POSTGRES_PASSWORD:-pact}@postgres:5432/pact
+      PACT_SIM_BASE_URL: http://simulators:8100
+      PACT_CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
+      PACT_ADAPTER_TIMEOUT_S: "1.0"
+      PACT_OTEL_EXPORTER: ${PACT_OTEL_EXPORTER:-none}
+      PACT_PLANNER_PROVIDER: ${PACT_PLANNER_PROVIDER:-deterministic}
+      PACT_PLANNER_BASE_URL: ${PACT_PLANNER_BASE_URL:-}
+      PACT_PLANNER_MODEL: ${PACT_PLANNER_MODEL:-}
+      PACT_PLANNER_API_KEY: ${PACT_PLANNER_API_KEY:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      simulators:
+        condition: service_started
+    ports:
+      - "8000:8000"
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_PACT_API_URL: http://localhost:8000
+    environment:
+      NEXT_PUBLIC_PACT_API_URL: http://localhost:8000
+    depends_on:
+      - backend
+    ports:
+      - "3000:3000"
+
+volumes:
+  pgdata:
