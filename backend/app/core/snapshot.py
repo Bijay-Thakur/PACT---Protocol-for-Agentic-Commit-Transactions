@@ -14,7 +14,7 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
-from app.domain.enums import EffectState, TransactionState
+from app.domain.enums import Application, EffectState, TransactionState
 from app.domain.invariant import InvariantDefinition
 from app.domain.resource_claim import ResourceClaim
 
@@ -70,6 +70,36 @@ class EffectNode:
     verification_result: dict[str, Any] | None
     dispatched_at: datetime | None
     verified_at: datetime | None
+    application: Application = Application.NOT_SENT
+    postcondition: str = "UNDETERMINED"
+    restoration: str = "NOT_REQUIRED"
+    observed_amount: Decimal | None = None
+    max_exposure: Decimal | None = None
+    currency: str | None = None
+    slot: str | None = None
+
+    @property
+    def customer_id(self) -> str | None:
+        return self.payload.get("customer_id")
+
+    def exposure(self) -> Decimal | None:
+        """Amount this effect commits (or may commit) against authority and budgets.
+
+        Applied effects count their *observed* amount (an applied wrong amount stays in
+        exposure); unknown outcomes count a conservative bound; unsent live effects count
+        the requested amount; confirmed non-application and released effects count nothing.
+        """
+        if self.amount is None:
+            return None
+        if self.application == Application.APPLIED:
+            return self.observed_amount if self.observed_amount is not None else self.amount
+        if self.application == Application.UNKNOWN:
+            return max(self.amount, self.max_exposure or self.amount)
+        if self.application == Application.NOT_APPLIED_CONFIRMED:
+            return None
+        if self.state in (EffectState.ABORTED, EffectState.FAILED, EffectState.COMPENSATED):
+            return None
+        return self.amount
 
 
 @dataclass(frozen=True)

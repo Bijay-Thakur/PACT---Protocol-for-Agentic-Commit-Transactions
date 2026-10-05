@@ -24,15 +24,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.snapshot import (
     CapNode,
     EffectNode,
-    ExternalClaim,
     InvariantNode,
     LogicalOpNode,
     TreeSnapshot,
     TxNode,
 )
-from app.core.state_machine import EXPOSURE_EFFECT_STATES, POST_BARRIER_TX_STATES
 from app.domain.effect import EffectView
-from app.domain.enums import EffectState, OperatorActionType, ReversibilityClass, TransactionState
+from app.domain.enums import (
+    Application,
+    EffectState,
+    OperatorActionType,
+    Postcondition,
+    Restoration,
+    ReversibilityClass,
+    TransactionState,
+)
 from app.domain.errors import NotFound
 from app.domain.invariant import InvariantDefinition
 from app.domain.resource_claim import ResourceClaim
@@ -124,7 +130,7 @@ async def load_tree(s: AsyncSession, root_id: UUID, *, lock: bool, lock_operatio
         eff_stmt = eff_stmt.with_for_update()
     effects = {e.id: e for e in (await s.execute(eff_stmt)).scalars()}
     invariants = list((await s.execute(select(InvariantRow).where(InvariantRow.transaction_id.in_(ids)))).scalars())
-    op_ids = sorted({e.logical_operation_id for e in effects.values()})
+    op_ids = sorted({e.logical_operation_id for e in effects.values() if e.logical_operation_id is not None})
     lop_stmt = select(LogicalOperationRow).where(LogicalOperationRow.id.in_(op_ids)).order_by(LogicalOperationRow.operation_key)
     if lock_operations:
         lop_stmt = lop_stmt.with_for_update()
@@ -134,29 +140,10 @@ async def load_tree(s: AsyncSession, root_id: UUID, *, lock: bool, lock_operatio
                                         OperatorActionRow.action == OperatorActionType.APPROVE)
         .order_by(OperatorActionRow.created_at)
     )).scalars())
-    external = await _external_claims(s, root_id, effects)
+    # Cross-root isolation is enforced by durable reservations (core/reservations.py)
+    # taken inside the binding barrier transaction, not by scanning other roots here.
     return TreeRows(root=root, txs=txs, caps=caps, effects=effects, invariants=invariants,
-                    logical_ops=lops, approvals=approvals, external_claims=external)
-
-
-async def _external_claims(s: AsyncSession, root_id: UUID, effects: dict[UUID, EffectRow]) -> list[ExternalClaim]:
-    resources = {c["resource"] for e in effects.values() for c in e.resource_claims}
-    if not resources:
-        return []
-    stmt = (
-        select(EffectRow)
-        .join(TransactionRow, TransactionRow.id == EffectRow.root_id)
-        .where(EffectRow.root_id != root_id,
-               TransactionRow.state.in_([str(x) for x in POST_BARRIER_TX_STATES]),
-               EffectRow.state.in_([str(x) for x in EXPOSURE_EFFECT_STATES]))
-    )
-    out = []
-    for e in (await s.execute(stmt)).scalars():
-        for c in e.resource_claims:
-            if c["resource"] in resources:
-                out.append(ExternalClaim(root_id=e.root_id, effect_id=e.id, operation_key=e.operation_key,
-                                         claim=ResourceClaim(**c)))
-    return out
+                    logical_ops=lops, approvals=approvals, external_claims=[])
 
 
 async def next_attempt_no(s: AsyncSession, logical_operation_id: UUID, kind: str) -> int:
@@ -195,13 +182,17 @@ def effect_node(e: EffectRow) -> EffectNode:
                       claims=tuple(ResourceClaim(**c) for c in e.resource_claims),
                       depends_on=tuple(e.depends_on or []), prepare_evidence=dict(e.prepare_evidence or {}),
                       verification_result=e.verification_result, dispatched_at=e.dispatched_at,
-                      verified_at=e.verified_at)
+                      verified_at=e.verified_at, application=Application(e.application),
+                      postcondition=e.postcondition, restoration=e.restoration,
+                      observed_amount=_d(e.observed_amount), max_exposure=_d(e.max_exposure),
+                      currency=e.currency, slot=e.slot)
 
 
 def effect_view(e: EffectRow) -> EffectView:
     return EffectView(
-        id=e.id, transaction_id=e.transaction_id, root_id=e.root_id, logical_operation_id=e.logical_operation_id,
-        operation_key=e.operation_key, effect_type=e.contract_type, actor_id=e.actor_id,
+        id=e.id, tenant_id=e.tenant_id, transaction_id=e.transaction_id, root_id=e.root_id,
+        logical_operation_id=e.logical_operation_id, operation_key=e.operation_key, slot=e.slot,
+        effect_type=e.contract_type, contract_version=e.contract_version, actor_id=e.actor_id,
         state=EffectState(e.state), payload=dict(e.payload), amount=_d(e.amount),
         resource_claims=[ResourceClaim(**c) for c in e.resource_claims], depends_on=list(e.depends_on or []),
         reversibility_class=ReversibilityClass(e.reversibility_class),
@@ -209,7 +200,10 @@ def effect_view(e: EffectRow) -> EffectView:
         prepare_evidence=dict(e.prepare_evidence or {}), dispatch_result=e.dispatch_result,
         verification_result=e.verification_result, reconciliation_result=e.reconciliation_result,
         compensation_result=e.compensation_result, created_at=e.created_at, updated_at=e.updated_at,
-        dispatched_at=e.dispatched_at, verified_at=e.verified_at,
+        dispatched_at=e.dispatched_at, verified_at=e.verified_at, currency=e.currency,
+        application=Application(e.application), postcondition=Postcondition(e.postcondition),
+        restoration=Restoration(e.restoration), observed_amount=_d(e.observed_amount),
+        max_exposure=_d(e.max_exposure),
     )
 
 

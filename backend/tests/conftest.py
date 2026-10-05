@@ -43,11 +43,17 @@ def migrated_db() -> str:
     if not TEST_DB:
         pytest.skip("PACT_TEST_DATABASE_URL not set")
 
+    from .db_guard import check_and_mark, write_marker
+
     async def reset():
         import asyncpg
         conn = await asyncpg.connect(TEST_DB.replace("+asyncpg", ""))
-        await conn.execute("DROP SCHEMA public CASCADE; CREATE SCHEMA public;")
-        await conn.close()
+        try:
+            await check_and_mark(conn, TEST_DB)  # A45: refuse anything not provably disposable
+            await conn.execute("DROP SCHEMA public CASCADE; CREATE SCHEMA public;")
+            await write_marker(conn)
+        finally:
+            await conn.close()
 
     def migrate():
         from alembic import command
@@ -66,7 +72,8 @@ def migrated_db() -> str:
 def make_settings(**overrides: Any):
     from app.config import Settings
 
-    base = {"database_url": TEST_DB, "adapter_timeout_s": 0.5, "auto_recover_on_startup": False}
+    base = {"database_url": TEST_DB, "adapter_timeout_s": 0.5, "auto_recover_on_startup": False,
+            "planner_provider": "deterministic", "planner_share_workflow_catalog": False}
     base.update(overrides)
     return Settings(**base)
 

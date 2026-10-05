@@ -39,11 +39,15 @@ services:
       PACT_SIM_BASE_URL: http://simulators:8100
       PACT_CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
       PACT_ADAPTER_TIMEOUT_S: "1.0"
+      PACT_DEMO_MODE: ${PACT_DEMO_MODE:-false}
+      PACT_EMBEDDED_WORKER: "true"
       PACT_OTEL_EXPORTER: ${PACT_OTEL_EXPORTER:-none}
       PACT_PLANNER_PROVIDER: ${PACT_PLANNER_PROVIDER:-deterministic}
       PACT_PLANNER_BASE_URL: ${PACT_PLANNER_BASE_URL:-}
       PACT_PLANNER_MODEL: ${PACT_PLANNER_MODEL:-}
       PACT_PLANNER_API_KEY: ${PACT_PLANNER_API_KEY:-}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      PACT_PLANNER_SHARE_WORKFLOW_CATALOG: ${PACT_PLANNER_SHARE_WORKFLOW_CATALOG:-false}
     depends_on:
       postgres:
         condition: service_healthy

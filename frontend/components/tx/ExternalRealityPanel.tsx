@@ -8,7 +8,8 @@ import { stateClasses } from "@/lib/states";
 import { ErrorBox, Expandable, JsonView, Mono } from "../ui";
 
 /** Ground truth inside the simulated providers. Refetches whenever `refreshKey` changes. */
-export function ExternalRealityPanel({ customerId, refreshKey }: { customerId: string | undefined; refreshKey: number }) {
+export function ExternalRealityPanel({ customerId, transactionId, refreshKey }: {
+  customerId: string | undefined; transactionId: string; refreshKey: number }) {
   const [data, setData] = useState<ExternalState | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -16,7 +17,7 @@ export function ExternalRealityPanel({ customerId, refreshKey }: { customerId: s
     if (!customerId) return;
     let alive = true;
     api
-      .externalState(customerId)
+      .externalState(transactionId)
       .then((d) => {
         if (alive) {
           setData(d);
@@ -27,7 +28,7 @@ export function ExternalRealityPanel({ customerId, refreshKey }: { customerId: s
     return () => {
       alive = false;
     };
-  }, [customerId, refreshKey]);
+  }, [customerId, transactionId, refreshKey]);
 
   if (!customerId) return <div className="text-sm text-faint">No customer_id in transaction metadata.</div>;
   if (error) return <ErrorBox title="Cannot load external state" message={error} />;

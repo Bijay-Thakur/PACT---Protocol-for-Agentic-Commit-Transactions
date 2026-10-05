@@ -1,5 +1,11 @@
 # PACT — Protocol for Agentic Commit Transactions
 
+> **Phase 2 is in progress.** The scenarios below describe the original simulated workflow.
+> Current setup, evidence, and remaining gates are in the
+> [Phase 2 runbook](docs/phase2/runbook.md),
+> [implementation checklist](docs/phase2/implementation-checklist.md), and
+> [current state report](docs/phase2/current-state-report.md).
+
 **PACT is the transaction and commit layer that lets autonomous agents coordinate real-world side effects across multiple systems under shared authority and invariants, verify what actually happened, recover safely from ambiguity or partial failure, and produce an accountable receipt of the final business outcome.**
 
 > Agents may reason, delegate and propose effects independently, but effects that belong to the same business transaction may not commit independently.
@@ -40,48 +46,34 @@ Restart recovery is demonstrated with a real process death: `os._exit(137)` righ
 
 ## Quick start
 
-### Docker (intended)
+### Windows PowerShell (verified locally)
 
-```bash
-cp .env.example .env
-docker compose up --build
-# console:  http://localhost:3000     API docs: http://localhost:8000/docs
-python scripts/run_all_demos.py      # runs every scenario against the API (stdlib only)
+Requirements: Python 3.12+, Node 20+, PostgreSQL 14+, a configured `.env`, and an existing empty `pact` development database. From the repository root:
+
+```powershell
+py -3.13 -m venv .venv
+& .\.venv\Scripts\python.exe -m pip install -e 'backend[dev]'
+Set-Location frontend
+npm.cmd ci
+Set-Location ..
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\start_local.ps1 -SetupOperator
 ```
 
-Compose runs `postgres`, `simulators` (the external systems, separate DB `pact_sim`), `backend` (runs migrations on start) and `frontend`.
+`-SetupOperator` prompts for a private password. Then open `http://localhost:3000` and sign in with tenant `local`, username `operator`. The API docs are at `http://localhost:8000/docs`. Later starts can omit `-SetupOperator`; stop the servers with `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\stop_local.ps1`. The launcher loads `.env`, migrates the database, enables local demos, and checks both servers. It writes ignored logs under `.local/`. The existing `.env` in this checkout selects Groq and reads its key from `GROQ_API_KEY`.
 
-### Without Docker
-
-Requirements: Python 3.12+, Node 20+, PostgreSQL 14+.
-
-```bash
-python -m venv .venv && .venv/bin/pip install -e "backend[dev]"      # Windows: .venv\Scripts\pip
-export PACT_DATABASE_URL=postgresql+asyncpg://pact:pact@localhost:5432/pact
-cd backend && alembic upgrade head && uvicorn app.main:app --port 8000
-# new terminal
-cd frontend && npm install && npm run dev                            # http://localhost:3000
-```
-
-With `PACT_SIM_BASE_URL=inprocess` (the default) the simulated providers run inside the backend process, behind an ASGI HTTP transport and in their own tables.
+Docker Compose is packaged but has not been verified on this host because the Docker daemon is unavailable. See the [runbook](docs/phase2/runbook.md) for manual, MCP, and worker setup.
 
 ### Demos
 
 - **Console:** the home page has one card per scenario (fault injection preconfigured), live pacing, and "pause at UNKNOWN". Each transaction page shows the commit barrier, the agent hierarchy, the effect DAG, *provider said vs. reality verified* per effect, authority and exposure, invariants, ground-truth external state, and the durable event timeline. Each receipt page shows the receipt with hash verification.
-- **Scripts** (`scripts/`, stdlib only, `PACT_API_URL` defaults to `http://localhost:8000`): `run_all_demos.py`, `run_demo_success.py`, `run_demo_unknown.py`, `run_demo_compensation.py`, `seed_demo.py`, `run_demo_restart.py` (needs the backend venv and `PACT_DATABASE_URL`).
+- **Legacy scripts:** the original unauthenticated `scripts/run_demo_*.py` clients need migration to the Phase 2 API. Use the signed-in console or `python -m app.cli scenario ...` for the current simulated flows.
 - **CLI:** `python -m app.cli scenario [name...]` runs scenarios in-process. `python -m app.cli crash-midflight` followed by `python -m app.cli recover` demonstrates restart recovery.
 
 See [docs/demo.md](docs/demo.md) for a walkthrough script.
 
 ## Tests
 
-```bash
-cd backend
-export PACT_TEST_DATABASE_URL=postgresql+asyncpg://pact:pact@localhost:5432/pact_test   # schema is dropped!
-pytest -q
-```
-
-The suite covers unit tests of every engine (state machines, authority, conflicts, DAG, invariants, barrier, hashing, outcome classification) and integration tests against real PostgreSQL: the 12 acceptance tests, all scenarios twice each, concurrency (racing commits, racing duplicate operation keys, concurrent child budget use, optimistic version conflicts), fault injection, and restart recovery, including a real subprocess crash. Without `PACT_TEST_DATABASE_URL` only the unit tests run.
+The full suite needs a **disposable** PostgreSQL database because the fixture drops its `public` schema. Never set `PACT_TEST_DATABASE_URL` to the working `PACT_DATABASE_URL`. The test guard checks this before a reset. See the [validation report](docs/phase2/validation-report.md) for the verified command and coverage; without the test database, only unit tests run.
 
 ## Repository layout
 
@@ -102,7 +94,7 @@ scripts/                demo scripts
 
 ## Model integration (NVIDIA Nemotron or any other model)
 
-`backend/app/agents/model_provider.py` defines `PlannerProvider.propose_transaction(intent, context) -> TransactionSpec` and `ExplanationProvider.explain_decision(decision) -> str`. The default is a deterministic planner. Set `PACT_PLANNER_PROVIDER=openai_compatible` with `PACT_PLANNER_BASE_URL`/`MODEL`/`API_KEY` to use any OpenAI-compatible endpoint, such as NVIDIA NIM. `POST /api/v1/planner/propose` only returns a proposal: **model proposes → PACT validates → PACT decides.** No code path lets model output authorize a commit.
+`backend/app/agents/model_provider.py` defines a bounded `PlanProposal` output. The deterministic fixture, Groq, generic OpenAI-compatible endpoint, and explicit Nebius/Nemotron mode are supported. Groq can use `GROQ_API_KEY` from the private environment. `POST /api/v1/planner/propose` only returns a proposal: **model proposes → PACT validates → PACT decides.** The workflow catalog is sent to the selected model only when `PACT_PLANNER_SHARE_WORKFLOW_CATALOG=true`.
 
 ## Documentation
 
@@ -114,4 +106,4 @@ scripts/                demo scripts
 
 ## Known limitations
 
-See the validation report. In short: no real authentication of agents or operators (actor ids are asserted, then bound and checked server-side); effects execute sequentially; recovery runs at process start rather than through continuous workers; receipts are hashed but not signed; providers are simulated.
+See the [Phase 2 acceptance matrix](docs/phase2/implementation-checklist.md#acceptance-matrix). Agents and operators are authenticated, and durable workers handle recovery. The verified business providers are simulated, receipts are hashed but not signed, and live Nebius/NVIDIA inference, actual Code Council integration, enforcement isolation, and a browser walkthrough remain open.

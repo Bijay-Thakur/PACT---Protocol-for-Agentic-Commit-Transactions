@@ -68,7 +68,7 @@ def test_legal_effect_paths(path):
     (E.UNKNOWN, E.FAILED),        # never convert UNKNOWN to FAILED for convenience
     (E.PROPOSED, E.DISPATCHING),  # cannot dispatch without validation + prepare
     (E.DISPATCHED, E.VERIFIED),   # cannot be VERIFIED without a verifier pass
-    (E.FAILED, E.COMPENSATING),
+    (E.FAILED, E.VERIFIED),
 ])
 def test_illegal_effect_transitions(a, b):
     with pytest.raises(InvalidStateTransition):

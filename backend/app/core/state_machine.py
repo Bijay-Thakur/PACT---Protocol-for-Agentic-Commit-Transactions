@@ -14,8 +14,11 @@ from app.domain.errors import InvalidStateTransition
 TX_TRANSITIONS: dict[T, frozenset[T]] = {
     T.CREATED: frozenset({T.SPECIFYING, T.ABORTING}),
     T.SPECIFYING: frozenset({T.PREPARING, T.ABORTING}),
-    T.PREPARING: frozenset({T.PREPARED, T.ABORTING}),
-    T.PREPARED: frozenset({T.COMMITTING, T.ABORTING}),
+    # PREPARING -> SPECIFYING: compile rejected / needs clarification, or a stalled read-only
+    # preparation was reset by the sweeper. PREPARED -> SPECIFYING: an explicit revision (new
+    # draft revision; prior approvals no longer match the digest).
+    T.PREPARING: frozenset({T.PREPARED, T.SPECIFYING, T.ABORTING}),
+    T.PREPARED: frozenset({T.COMMITTING, T.SPECIFYING, T.ABORTING}),
     T.COMMITTING: frozenset(
         {T.VERIFYING, T.UNKNOWN, T.COMPENSATING, T.HUMAN_REQUIRED, T.FAILED_TERMINAL}
     ),
@@ -50,7 +53,7 @@ POST_BARRIER_TX_STATES: frozenset[T] = frozenset(
 EFFECT_TRANSITIONS: dict[E, frozenset[E]] = {
     E.PROPOSED: frozenset({E.VALIDATED, E.FAILED, E.ABORTED}),
     E.VALIDATED: frozenset({E.PREPARED, E.FAILED, E.ABORTED}),
-    E.PREPARED: frozenset({E.DISPATCHING, E.ABORTED}),
+    E.PREPARED: frozenset({E.DISPATCHING, E.VALIDATED, E.ABORTED}),
     E.DISPATCHING: frozenset({E.DISPATCHED, E.UNKNOWN, E.FAILED, E.RETRYABLE}),
     E.DISPATCHED: frozenset({E.VERIFYING, E.UNKNOWN}),
     E.VERIFYING: frozenset({E.VERIFIED, E.FAILED, E.UNKNOWN}),
@@ -60,20 +63,24 @@ EFFECT_TRANSITIONS: dict[E, frozenset[E]] = {
     E.RETRYABLE: frozenset({E.DISPATCHING, E.FAILED, E.ABORTED}),
     E.COMPENSATING: frozenset({E.COMPENSATED, E.HUMAN_REQUIRED}),
     E.HUMAN_REQUIRED: frozenset({E.RECONCILING, E.COMPENSATING, E.COMPENSATED, E.FAILED}),
-    E.FAILED: frozenset(),
+    # FAILED -> COMPENSATING: an *applied* mismatch (wrong value written) is a real
+    # consequence and may be restored when the contract allows it.
+    E.FAILED: frozenset({E.COMPENSATING}),
     E.COMPENSATED: frozenset(),
     E.ABORTED: frozenset(),
 }
 
-TERMINAL_EFFECT_STATES: frozenset[E] = frozenset({E.FAILED, E.COMPENSATED, E.ABORTED})
+TERMINAL_EFFECT_STATES: frozenset[E] = frozenset({E.COMPENSATED, E.ABORTED})
 
 # Effects whose outcome is not yet known; any of these blocks commit progress.
 UNRESOLVED_EFFECT_STATES: frozenset[E] = frozenset(
     {E.DISPATCHING, E.DISPATCHED, E.VERIFYING, E.UNKNOWN, E.RECONCILING, E.HUMAN_REQUIRED}
 )
 
-# Effects that still count against authority/budget exposure.
-EXPOSURE_EFFECT_STATES: frozenset[E] = frozenset(set(E) - {E.ABORTED, E.FAILED, E.COMPENSATED})
+# Effects that may still be dispatched (draft/prepared/retryable) - they count against exposure.
+LIVE_UNSENT_STATES: frozenset[E] = frozenset({E.PROPOSED, E.VALIDATED, E.PREPARED, E.RETRYABLE, E.DISPATCHING})
+# Legacy name kept for callers that only need "not released" semantics.
+EXPOSURE_EFFECT_STATES: frozenset[E] = frozenset(set(E) - {E.ABORTED, E.COMPENSATED})
 
 
 def assert_tx_transition(current: T | str, target: T | str) -> None:

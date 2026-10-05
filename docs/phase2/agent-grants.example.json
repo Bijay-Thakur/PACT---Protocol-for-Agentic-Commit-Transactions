@@ -1,0 +1,18 @@
+{
+  "workflows": {
+    "customer_offboarding": {
+      "amount_limit": "500.00",
+      "cumulative_amount_limit": "500.00",
+      "approval_threshold": "100.00",
+      "daily_refund_limit": "1000.00",
+      "delegation_depth": 1,
+      "may_delegate_to": [
+        "subscription_agent",
+        "identity_agent",
+        "crm_agent",
+        "billing_agent",
+        "notification_agent"
+      ]
+    }
+  }
+}

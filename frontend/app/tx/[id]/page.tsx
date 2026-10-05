@@ -84,7 +84,8 @@ function TransactionView({ id }: { id: string }) {
         </div>
         <div className="p-4">
           {tab === "events" && <EventTimeline events={events} detail={detail} />}
-          {tab === "external" && <ExternalRealityPanel customerId={detail.metadata.customer_id} refreshKey={detail.event_count} />}
+          {tab === "external" && <ExternalRealityPanel customerId={detail.metadata.customer_id}
+            transactionId={detail.root_id} refreshKey={detail.event_count} />}
           {tab === "invariants" && <InvariantsPanel detail={detail} />}
           {tab === "authority" && <AuthorityPanel detail={detail} />}
         </div>

@@ -55,7 +55,7 @@ export interface RunResponse {
   faults: ScenarioFault[];
   commit_decision: { eligible: boolean; blocking_reasons: string[] } | null;
   state: string;
-  provider_calls: string[];
+  provider_calls?: string[];
   matches_expected?: boolean;
 }
 
@@ -302,6 +302,8 @@ export interface TransactionDetail {
   transaction: Transaction;
   root_id: string;
   policy: Policy;
+  plan_revision?: { number: number; status: string; digest: string | null;
+    approval_required: boolean; approval?: { role?: string; reason?: string } } | null;
   metadata: TxMetadata;
   tree: TreeNode[];
   capabilities: Capability[];
@@ -440,7 +442,6 @@ export interface ReceiptVerify {
 
 export type OperatorActionType =
   | "FINALIZE_FAILED"
-  | "RETRY_RECONCILIATION"
-  | "RETRY_COMPENSATION"
-  | "APPROVE"
-  | "MARK_EFFECT_COMPENSATED";
+  | "RECONCILE"
+  | "RETRY_RESTORATION"
+  | "ATTEST_RESIDUAL";

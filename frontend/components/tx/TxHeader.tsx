@@ -22,15 +22,14 @@ export function TxHeader({
   const tx = detail.transaction;
   const [busy, setBusy] = useState<string | null>(null);
   const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
-  const [operatorId, setOperatorId] = useState("operator-1");
   const [note, setNote] = useState("");
 
-  async function act(label: string, fn: () => Promise<{ state: string; explanation?: string }>) {
+  async function act(label: string, fn: () => Promise<{ state?: string; status?: string }>) {
     setBusy(label);
     setResult(null);
     try {
       const r = await fn();
-      setResult({ ok: true, text: `${label}: transaction is now ${r.state}${r.explanation ? ` — ${r.explanation}` : ""}` });
+      setResult({ ok: true, text: `${label}: ${r.state || r.status || "recorded"}` });
     } catch (e) {
       const err = e as ApiError;
       setResult({ ok: false, text: `${label} failed: ${err.code ?? ""} ${err.message}` });
@@ -41,7 +40,7 @@ export function TxHeader({
   }
 
   const op = (action: OperatorActionType, label: string) => () =>
-    act(label, () => api.operatorAction(tx.id, { operator_id: operatorId, action, note }));
+    act(label, () => api.operatorAction(tx.id, { action, reason: note }));
 
   const btn =
     "neu-btn px-4 py-2 text-xs";
@@ -91,15 +90,17 @@ export function TxHeader({
       {/* State-dependent actions */}
       {tx.state === "PREPARED" && (
         <div className="neu-inset mt-5 flex items-center gap-4 p-4">
-          <button
-            className={`${btn} neu-btn-primary`}
-            disabled={!!busy}
-            onClick={() => act("Commit", () => api.commit(tx.id, { step_delay_ms: 400, background: true }))}
-          >
-            {busy === "Commit" ? "Committing…" : "Commit"}
-          </button>
+          {detail.plan_revision?.approval_required && detail.plan_revision.digest && <>
+            <input value={note} onChange={(e) => setNote(e.target.value)}
+              className="neu-field min-w-[240px] px-3 py-2 text-xs" placeholder="Approval reason" />
+            <button className={`${btn} neu-btn-primary`} disabled={!!busy || note.length < 3}
+              onClick={() => act("Approve", () => api.approve(tx.id, detail.plan_revision!.digest!, note))}>
+              Approve frozen plan
+            </button>
+          </>}
           <span className="text-xs text-mute">
-            Evaluates the global commit barrier; execution proceeds only if every check passes.
+            Digest {detail.plan_revision?.digest?.slice(0, 16) ?? "unavailable"}. The initiating agent requests
+            commit with the complete digest after review.
           </span>
         </div>
       )}
@@ -108,7 +109,7 @@ export function TxHeader({
           <button
             className={`${btn} text-warn`}
             disabled={!!busy}
-            onClick={() => act("Reconcile", () => api.reconcile(tx.id))}
+            onClick={() => act("Reconcile", () => api.reconcile(tx.id, "Operator requested reconciliation"))}
           >
             {busy === "Reconcile" ? "Reconciling…" : "Reconcile"}
           </button>
@@ -125,26 +126,20 @@ export function TxHeader({
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <input
-              value={operatorId}
-              onChange={(e) => setOperatorId(e.target.value)}
-              className="neu-field w-32 px-3 py-2 font-mono text-xs"
-              placeholder="operator id"
-            />
-            <input
               value={note}
               onChange={(e) => setNote(e.target.value)}
               className="neu-field min-w-[240px] flex-1 px-3 py-2 text-xs"
               placeholder="note (recorded on the receipt)"
             />
-            <button className={`${btn} text-info`} disabled={!!busy || !operatorId}
-              onClick={op("RETRY_COMPENSATION", "Retry compensation")}>
-              Retry compensation
+            <button className={`${btn} text-info`} disabled={!!busy || note.length < 3}
+              onClick={op("RETRY_RESTORATION", "Retry restoration")}>
+              Retry restoration
             </button>
-            <button className={`${btn} text-warn`} disabled={!!busy || !operatorId}
-              onClick={op("RETRY_RECONCILIATION", "Retry reconciliation")}>
+            <button className={`${btn} text-warn`} disabled={!!busy || note.length < 3}
+              onClick={op("RECONCILE", "Retry reconciliation")}>
               Retry reconciliation
             </button>
-            <button className={`${btn} text-bad`} disabled={!!busy || !operatorId}
+            <button className={`${btn} text-bad`} disabled={!!busy || note.length < 3}
               onClick={op("FINALIZE_FAILED", "Finalize as failed")}>
               Finalize as failed
             </button>

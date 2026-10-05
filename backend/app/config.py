@@ -56,6 +56,16 @@ class Settings:
     planner_base_url: str = field(default_factory=lambda: _env("PACT_PLANNER_BASE_URL", ""))
     planner_model: str = field(default_factory=lambda: _env("PACT_PLANNER_MODEL", ""))
     planner_api_key: str = field(default_factory=lambda: _env("PACT_PLANNER_API_KEY", ""))
+    planner_share_workflow_catalog: bool = field(
+        default_factory=lambda: _bool("PACT_PLANNER_SHARE_WORKFLOW_CATALOG", False))
+    worker_lease_s: float = field(default_factory=lambda: float(_env("PACT_WORKER_LEASE_S", "15")))
+    approval_ttl_minutes: float = field(default_factory=lambda: float(_env("PACT_APPROVAL_TTL_MINUTES", "30")))
+    demo_mode: bool = field(default_factory=lambda: _bool("PACT_DEMO_MODE", False))
+    embedded_worker: bool = field(default_factory=lambda: _bool("PACT_EMBEDDED_WORKER", True))
+    code_sandbox_repo: str = field(default_factory=lambda: _env("PACT_CODE_SANDBOX_REPO", ""))
+    code_sandbox_repo_id: str = field(default_factory=lambda: _env("PACT_CODE_SANDBOX_REPO_ID", ""))
+    code_sandbox_allowed_paths: list[str] = field(default_factory=lambda: [
+        p for p in _env("PACT_CODE_SANDBOX_ALLOWED_PATHS", "").split(",") if p])
 
     def issuer_max_amount(self, issuer: str) -> Decimal | None:
         policy = self.issuer_policies.get(issuer)

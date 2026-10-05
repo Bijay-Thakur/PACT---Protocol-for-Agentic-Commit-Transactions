@@ -19,11 +19,16 @@ from typing import Any, Callable
 
 from app.core.effect_graph import EffectGraph
 from app.core.snapshot import EffectNode, InvariantNode, TreeSnapshot
-from app.core.state_machine import EXPOSURE_EFFECT_STATES
 from app.domain.enums import EffectState, InvariantPhase
 from app.domain.invariant import InvariantEvaluation
 
 Result = tuple[bool, dict[str, Any], str]
+
+
+def _obs(e: EffectNode) -> dict[str, Any]:
+    """Prepare observations (Phase 2 layout) with a fallback to the flat Phase 1 layout."""
+    pe = e.prepare_evidence or {}
+    return pe.get("observations", pe) if isinstance(pe.get("observations"), dict) else pe
 
 
 def _dec(v: Any) -> Decimal | None:
@@ -81,11 +86,14 @@ class InvariantEngine:
             return {"amount_limit": cap.amount_limit, "cumulative_amount_limit": cap.cumulative_limit}.get(attr) if cap else None
         if ref.startswith("observation:"):
             # Effect types contain dots ("subscription.cancel"); the key is the last segment.
+            # The source must concern the SAME customer as the effect being checked; zero or
+            # several candidate sources are ambiguous and fail closed (A28).
             etype, _, key = ref.removeprefix("observation:").rpartition(".")
-            for e in sorted(snap.effects, key=lambda e: e.operation_key):
-                if e.effect_type == etype and key in e.prepare_evidence:
-                    return e.prepare_evidence[key]
-            return None
+            sources = [e for e in snap.effects if e.effect_type == etype and e.state != EffectState.ABORTED
+                       and (effect is None or e.customer_id == effect.customer_id)]
+            if len(sources) != 1 or key not in _obs(sources[0]):
+                return None
+            return _obs(sources[0])[key]
         if ref.startswith("metadata."):
             return snap.root.meta.get(ref.removeprefix("metadata."))
         raise ValueError(f"unknown reference {ref!r}")
@@ -93,7 +101,7 @@ class InvariantEngine:
     # -- evaluators --------------------------------------------------------
     def _effect_amount_lte(self, snap, graph, inv: InvariantNode, effects, phase) -> Result:
         cfg = inv.definition.config
-        targets = [e for e in effects if e.effect_type == cfg["effect_type"] and e.state in EXPOSURE_EFFECT_STATES]
+        targets = [e for e in effects if e.effect_type == cfg["effect_type"] and e.exposure() is not None]
         per_effect, failures = [], []
         for e in targets:
             limits: dict[str, str | None] = {}
@@ -123,13 +131,13 @@ class InvariantEngine:
     def _sum_amount_lte(self, snap, graph, inv, effects, phase) -> Result:
         cfg = inv.definition.config
         etype = cfg.get("effect_type")
-        live = [e for e in effects if e.amount is not None and e.state in EXPOSURE_EFFECT_STATES
-                and (etype is None or e.effect_type == etype)]
-        total = sum((e.amount for e in live), Decimal("0"))
+        live = [e for e in effects if e.exposure() is not None and (etype is None or e.effect_type == etype)]
+        total = sum((e.exposure() for e in live), Decimal("0"))
         limit = Decimal(str(cfg["limit"])) if "limit" in cfg else _dec(self._ref(snap, cfg["limit_ref"], None))
         observed = {
             "sum": str(total), "limit": str(limit) if limit is not None else None,
-            "contributions": [{"actor_id": e.actor_id, "operation_key": e.operation_key, "amount": str(e.amount)}
+            "contributions": [{"actor_id": e.actor_id, "operation_key": e.operation_key, "amount": str(e.exposure()),
+                               "application": str(e.application)}
                               for e in sorted(live, key=lambda e: (e.actor_id, e.operation_key))],
         }
         if limit is None:
@@ -141,10 +149,14 @@ class InvariantEngine:
     def _field_matches(self, snap, graph, inv, effects, phase) -> Result:
         cfg = inv.definition.config
         field, expected = cfg["field"], self._ref(snap, cfg["equals_ref"], None)
-        mismatched = sorted(e.operation_key for e in effects if field in e.payload and e.payload[field] != expected)
-        observed = {"field": field, "expected": expected, "mismatched": mismatched}
+        live = [e for e in effects if e.state != EffectState.ABORTED]
+        missing = sorted(e.operation_key for e in live if field not in e.payload)
+        mismatched = sorted(e.operation_key for e in live if field in e.payload and e.payload[field] != expected)
+        observed = {"field": field, "expected": expected, "missing": missing, "mismatched": mismatched}
         if expected is None:
             return False, observed, "expected value unresolved (fail closed)"
+        if missing:
+            return False, observed, f"{len(missing)} effect(s) lack required target field {field}"
         if mismatched:
             return False, observed, f"{len(mismatched)} effect(s) target a different {field}"
         return True, observed, f"all effects target {field}={expected}"
@@ -152,7 +164,7 @@ class InvariantEngine:
     def _unique_operation_keys(self, snap, graph, inv, effects, phase) -> Result:
         counts: dict[str, int] = {}
         for e in effects:
-            if e.state in EXPOSURE_EFFECT_STATES:
+            if e.state not in (EffectState.ABORTED,):
                 counts[e.operation_key] = counts.get(e.operation_key, 0) + 1
         dups = sorted(k for k, n in counts.items() if n > 1)
         if dups:
@@ -166,7 +178,7 @@ class InvariantEngine:
         rows, problems = [], []
         for d in dependents:
             ancestors = graph.ancestors(d.id) if d.id in graph.deps else set()
-            for r in required:
+            for r in [r for r in required if r.customer_id == d.customer_id]:
                 row = {"dependent": d.operation_key, "requires": r.operation_key,
                        "declared_dependency": r.id in ancestors,
                        "required_verified_at": r.verified_at.isoformat() if r.verified_at else None,
@@ -183,16 +195,21 @@ class InvariantEngine:
 
     def _implies_verified(self, snap, graph, inv, effects, phase) -> Result:
         cfg = inv.definition.config
-        ifs = [e for e in effects if e.effect_type == cfg["if_effect_type"]]
-        thens = [e for e in effects if e.effect_type == cfg["then_effect_type"]]
+        ifs = [e for e in effects if e.effect_type == cfg["if_effect_type"] and e.state != EffectState.ABORTED]
+        thens = [e for e in effects if e.effect_type == cfg["then_effect_type"] and e.state != EffectState.ABORTED]
         observed = {"if": [{"operation_key": e.operation_key, "state": e.state} for e in ifs],
                     "then": [{"operation_key": e.operation_key, "state": e.state} for e in thens]}
         if phase in (InvariantPhase.PREPARE, InvariantPhase.PRE_COMMIT):
             if ifs and not thens:
                 return False, observed, f"{cfg['if_effect_type']} proposed without {cfg['then_effect_type']}"
             return True, observed, "implication is structurally satisfiable"
-        if any(e.state == EffectState.VERIFIED for e in ifs) and not any(e.state == EffectState.VERIFIED for e in thens):
-            return False, observed, f"{cfg['if_effect_type']} verified but {cfg['then_effect_type']} is not"
+        for i in ifs:
+            if i.state != EffectState.VERIFIED:
+                continue
+            same = [t for t in thens if t.customer_id == i.customer_id]  # another customer's effect satisfies nothing
+            if not any(t.state == EffectState.VERIFIED for t in same):
+                return False, observed, (f"{cfg['if_effect_type']} verified for {i.customer_id} but "
+                                         f"{cfg['then_effect_type']} is not")
         return True, observed, "implication holds"
 
     def _single_external_match(self, snap, graph, inv, effects, phase) -> Result:

@@ -3,12 +3,13 @@ __pycache__/
 *.pyc
 *.egg-info/
 .pytest_cache/
+.pytest_tmp/
 .env
 node_modules/
 frontend/.next/
 frontend/out/
-.env.example
+.local/
 docker-compose.override.yml
 PACT_Concrete_System_Build_Plan.md
 PACT_Master_Build_Prompt.md
-
+PACT_Phase_2_Build_Plan_and_Master_Prompt.md

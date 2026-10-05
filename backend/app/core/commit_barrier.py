@@ -19,16 +19,16 @@ from app.core.conflict_manager import detect_conflicts
 from app.core.effect_graph import EffectGraph
 from app.core.invariant_engine import InvariantEngine
 from app.core.snapshot import TreeSnapshot
-from app.core.state_machine import EXPOSURE_EFFECT_STATES, UNRESOLVED_EFFECT_STATES
+from app.core.state_machine import UNRESOLVED_EFFECT_STATES
 from app.domain.decision import BarrierCheck, CommitDecision
-from app.domain.enums import InvariantPhase, LogicalOperationStatus, TransactionState
+from app.domain.enums import EffectState, InvariantPhase, LogicalOperationStatus, TransactionState
 from app.domain.invariant import InvariantEvaluation
 
+# Operations that may be (re)dispatched by a new root. FAILED / COMPENSATED identities are
+# closed: re-running the same business action needs an explicit new business epoch.
 ALLOWED_OP_STATUSES = {
     LogicalOperationStatus.AVAILABLE,
     LogicalOperationStatus.RETRYABLE,
-    LogicalOperationStatus.FAILED,
-    LogicalOperationStatus.COMPENSATED,
 }
 
 
@@ -45,7 +45,10 @@ class CommitBarrier:
         self.authority = authority
         self.invariants = invariants
 
-    def evaluate(self, snap: TreeSnapshot, now: datetime, *, binding: bool) -> BarrierResult:
+    def evaluate(self, snap: TreeSnapshot, now: datetime, *, binding: bool,
+                 extra_checks: list[BarrierCheck] | None = None) -> BarrierResult:
+        """``extra_checks`` carry Phase 2 inputs the coordinator evaluates against durable state:
+        frozen plan digest, approvals, provider freshness, reservations and budget capacity."""
         checks: list[BarrierCheck] = []
 
         def check(code: str, passed: bool, detail: str = "", *, subject: str | None = None,
@@ -72,7 +75,7 @@ class CommitBarrier:
                   observed={"transaction_id": str(tx.id), "state": tx.state, "required": tx.required},
                   reason=f"CHILD_NOT_PREPARED:{tx.actor_id}")
 
-        effects = [e for e in snap.effects if e.transaction_id not in excluded_tx and e.state in EXPOSURE_EFFECT_STATES]
+        effects = [e for e in snap.effects if e.transaction_id not in excluded_tx and e.state != EffectState.ABORTED]
 
         # Required effects and contracts.
         required_types = sorted(root.meta.get("required_effect_types", []))
@@ -143,13 +146,15 @@ class CommitBarrier:
 
         # Idempotency / stable operation identity.
         for e in sorted(effects, key=lambda e: e.operation_key):
-            op = snap.logical_ops.get(e.logical_operation_id)
-            status = LogicalOperationStatus(op.status) if op else None
+            op = snap.logical_ops.get(e.logical_operation_id) if e.logical_operation_id else None
+            status = LogicalOperationStatus(op.status) if op else LogicalOperationStatus.AVAILABLE
             owned_here = op is not None and op.owner_root_id == root.id
             ok = status in ALLOWED_OP_STATUSES or (owned_here and status == LogicalOperationStatus.RESERVED)
             reason = None
             if status == LogicalOperationStatus.VERIFIED:
                 reason = f"OPERATION_ALREADY_VERIFIED:{e.operation_key}"
+            elif status in (LogicalOperationStatus.FAILED, LogicalOperationStatus.COMPENSATED) and not owned_here:
+                reason = f"OPERATION_CLOSED_NEW_EPOCH_REQUIRED:{e.operation_key}"
             elif not ok:
                 reason = f"OPERATION_IN_FLIGHT_ELSEWHERE:{e.operation_key}"
             check("IDEMPOTENCY", ok, f"logical operation status {status}", subject=e.operation_key,
@@ -157,13 +162,7 @@ class CommitBarrier:
                             "owner_root_id": str(op.owner_root_id) if op and op.owner_root_id else None},
                   reason=reason)
 
-        # Approvals.
-        if root.meta.get("requires_approval"):
-            check("APPROVALS_SATISFIED", bool(snap.approvals),
-                  f"{len(snap.approvals)} approval(s) recorded", observed={"approvals": snap.approvals},
-                  reason="APPROVAL_REQUIRED")
-        else:
-            check("APPROVALS_SATISFIED", True, "no approval policy defined")
+        checks.extend(extra_checks or [])
 
         # Unresolved ambiguity anywhere in the tree.
         unresolved = sorted(e.operation_key for e in snap.effects if e.state in UNRESOLVED_EFFECT_STATES)

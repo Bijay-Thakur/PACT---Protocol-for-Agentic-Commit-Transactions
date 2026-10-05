@@ -47,6 +47,29 @@ def test_missing_observation_fails_closed():
     assert not evaluate(t)["refund_ok"].passed
 
 
+def test_observation_reference_requires_one_source_for_same_target():
+    t = refund_tree("10.00")
+    source_tx = t.effects[0].transaction_id
+    t.add(source_tx, "other-cancel", "subscription.cancel", payload={"customer_id": "C1"},
+          evidence={"unused_balance": "143.27"})
+    assert not evaluate(t)["refund_ok"].passed  # equal values do not erase source ambiguity
+    t2 = refund_tree("10.00")
+    t2.effects[0] = t2.effects[0].__class__(**{**t2.effects[0].__dict__,
+        "payload": {"customer_id": "C9"}})
+    assert not evaluate(t2)["refund_ok"].passed  # a different customer's value is irrelevant
+
+
+def test_required_target_field_cannot_be_missing():
+    t = Tree(meta={"customer_id": "C1"})
+    t.add(t.root_id, "missing-customer", "crm.update", payload={"lifecycle_state": "churned"})
+    t.invariant(key="same_customer", name="target", phase="PRE_COMMIT",
+                expression_type="field_matches", failure_action="BLOCK_COMMIT",
+                config={"field": "customer_id", "equals_ref": "metadata.customer_id"})
+    result = evaluate(t)["same_customer"]
+    assert not result.passed
+    assert result.observed_values["missing"] == ["missing-customer"]
+
+
 def test_sum_and_field_and_unique_invariants():
     t = Tree({"amount": "10000", "cumulative": "10000"}, meta={"customer_id": "C1"})
     for actor, amt in (("a", "1800"), ("b", "3800"), ("c", "5500")):
@@ -85,7 +108,7 @@ def test_barrier_eligible_snapshot():
     assert d.eligible, d.blocking_reasons
     codes = {c.code for c in d.checks}
     assert {"TRANSACTION_STATE_VALID", "CHILD_PREPARED", "AUTHORITY_VALID", "NO_AUTHORITY_ESCALATION",
-            "GLOBAL_BUDGET", "RESOURCE_CLAIMS_COMPATIBLE", "INVARIANT", "IDEMPOTENCY", "APPROVALS_SATISFIED",
+            "GLOBAL_BUDGET", "RESOURCE_CLAIMS_COMPATIBLE", "INVARIANT", "IDEMPOTENCY",
             "NO_BLOCKING_UNKNOWN", "DEPENDENCY_GRAPH_VALID", "EFFECT_CONTRACTS_RESOLVED",
             "REQUIRED_EFFECTS_PRESENT"} <= codes
 
@@ -96,7 +119,11 @@ def test_barrier_reports_every_blocking_reason():
                                                      "meta": {"customer_id": "C1", "requires_approval": True}})
     extra = t.child("late_agent", ["crm.update"], ["customer:C1/*"], state=TransactionState.PREPARING)
     t.add(extra, "crm", "crm.update", claims=[("customer:C1/crm_record", "WRITE")])
-    d = barrier.evaluate(t.snapshot(), NOW, binding=True).decision
+    from app.domain.decision import BarrierCheck
+    d = barrier.evaluate(t.snapshot(), NOW, binding=True, extra_checks=[
+        BarrierCheck(code="APPROVAL_BOUND_TO_DIGEST", passed=False,
+                     detail="no valid approval for the frozen digest", blocking_reason="APPROVAL_REQUIRED")
+    ]).decision
     assert not d.eligible
     assert "INVARIANT_FAILED:refund_ok" in d.blocking_reasons
     assert "CHILD_NOT_PREPARED:late_agent" in d.blocking_reasons

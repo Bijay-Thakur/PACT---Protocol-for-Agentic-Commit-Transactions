@@ -17,12 +17,19 @@ class PactApiError(Exception):
 
 
 class HttpPactClient:
-    def __init__(self, http: httpx.AsyncClient, prefix: str = "/api/v1"):
+    def __init__(self, http: httpx.AsyncClient, prefix: str = "/api/v1", *, api_key: str | None = None):
         self.http = http
         self.prefix = prefix
+        self.api_key = api_key
 
-    async def _req(self, method: str, path: str, json: Any = None, params: dict | None = None) -> dict[str, Any]:
-        resp = await self.http.request(method, f"{self.prefix}{path}", json=json, params=params)
+    async def _req(self, method: str, path: str, json: Any = None, params: dict | None = None,
+                   request_id: str | None = None) -> dict[str, Any]:
+        headers: dict[str, str] = {}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        if request_id:
+            headers["X-PACT-Request-ID"] = request_id
+        resp = await self.http.request(method, f"{self.prefix}{path}", json=json, params=params, headers=headers)
         body = resp.json() if resp.content else {}
         if resp.status_code >= 400:
             raise PactApiError(resp.status_code, body)
@@ -55,3 +62,43 @@ class HttpPactClient:
 
     async def operator_action(self, tx_id: str, body: dict[str, Any]) -> dict[str, Any]:
         return await self._req("POST", f"/transactions/{tx_id}/operator-actions", body)
+
+    # Phase 2 convenience methods. Identity comes from the API key, and approval
+    # remains an operator-only route rather than an agent convenience method.
+    async def list_contracts(self) -> dict[str, Any]:
+        return await self._req("GET", "/contracts")
+
+    async def begin(self, workflow: str, business_request: dict[str, Any],
+                    objective: str | None = None) -> dict[str, Any]:
+        return await self.create_transaction({"workflow": workflow,
+                                              "business_request": business_request,
+                                              "objective": objective})
+
+    async def delegate(self, parent_id: str, recipient: str, objective: str,
+                       capability: dict[str, Any], required: bool = True) -> dict[str, Any]:
+        return await self.create_child(parent_id, {"recipient": recipient,
+                                                    "objective": objective,
+                                                    "capability": capability,
+                                                    "required": required})
+
+    async def propose(self, tx_id: str, effect_type: str, slot: str,
+                      payload: dict[str, Any], request_id: str,
+                      expected_draft_version: int | None = None) -> dict[str, Any]:
+        return await self._req("POST", f"/transactions/{tx_id}/effects",
+                               {"effect_type": effect_type, "slot": slot,
+                                "payload": payload,
+                                "expected_draft_version": expected_draft_version},
+                               request_id=request_id)
+
+    async def request_commit(self, tx_id: str, revision_digest: str) -> dict[str, Any]:
+        return await self._req("POST", f"/transactions/{tx_id}/commit",
+                               {"revision_digest": revision_digest})
+
+    async def status(self, tx_id: str) -> dict[str, Any]:
+        return await self.get(tx_id)
+
+    async def abort(self, tx_id: str, reason: str) -> dict[str, Any]:
+        return await self._req("POST", f"/transactions/{tx_id}/abort", {"reason": reason})
+
+
+PactClient = HttpPactClient

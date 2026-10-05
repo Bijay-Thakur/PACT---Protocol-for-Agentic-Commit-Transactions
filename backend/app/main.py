@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -10,12 +11,13 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api import demo, effects, events, planner, receipts, transactions
+from app.api import auth, demo, effects, events, planner, receipts, transactions
 from app.config import Settings
 from app.domain.errors import PactError
 from app.runtime import Runtime
 from app.services.query_service import QueryService
 from app.telemetry import tracing
+from app.worker import Worker
 
 log = logging.getLogger("pact")
 
@@ -34,16 +36,23 @@ def create_app(settings: Settings | None = None, runtime: Runtime | None = None)
         app.state.runtime = rt
         app.state.queries = QueryService(rt)
         if settings.auto_recover_on_startup:
-            resumed = await rt.coordinator.resume_inflight()
-            if resumed:
-                log.info("restart recovery resumed %d transaction(s)", len(resumed))
-        yield
-        if runtime is None:
-            await rt.stop()
+            await rt.coordinator.sweep(stranded_grace_s=0)
+        worker_task = asyncio.create_task(Worker(rt).run_forever()) if settings.embedded_worker else None
+        try:
+            yield
+        finally:
+            if worker_task is not None:
+                worker_task.cancel()
+                try:
+                    await worker_task
+                except asyncio.CancelledError:
+                    pass
+            if runtime is None:
+                await rt.stop()
 
     app = FastAPI(title="PACT - Protocol for Agentic Commit Transactions", version="0.1.0", lifespan=lifespan)
     app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins, allow_methods=["*"],
-                       allow_headers=["*"])
+                       allow_headers=["*"], allow_credentials=True)
 
     @app.exception_handler(PactError)
     async def pact_error(_: Request, exc: PactError) -> JSONResponse:
@@ -53,7 +62,8 @@ def create_app(settings: Settings | None = None, runtime: Runtime | None = None)
     async def health() -> dict:
         return {"status": "ok"}
 
-    for r in (transactions.router, events.router, receipts.router, effects.router, demo.router, planner.router):
+    for r in (auth.router, transactions.router, events.router, receipts.router, effects.router,
+              planner.router, demo.router):
         app.include_router(r)
     return app
 

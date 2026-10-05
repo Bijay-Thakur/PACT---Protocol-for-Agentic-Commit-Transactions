@@ -15,7 +15,6 @@ from uuid import UUID
 
 from app.config import Settings
 from app.core.snapshot import CapNode, EffectNode, TreeSnapshot
-from app.core.state_machine import EXPOSURE_EFFECT_STATES
 from app.domain.capability import AuthorityViolationItem, CapabilitySpec, RootCapabilityGrant
 
 V = AuthorityViolationItem
@@ -158,7 +157,7 @@ class AuthorityEngine:
 
     # -- cumulative exposure ----------------------------------------------
     def cumulative_exposure(self, snap: TreeSnapshot) -> list[ExposureResult]:
-        """Sum live effect amounts under every capability's transaction subtree."""
+        """Sum effect exposure (observed / conservative / requested) under every capability's subtree."""
         results: list[ExposureResult] = []
         for tx in sorted(snap.txs.values(), key=lambda t: (t.depth, t.created_at, str(t.id))):
             cap = snap.cap_of(tx.id)
@@ -166,8 +165,9 @@ class AuthorityEngine:
                 continue
             contributions: dict[UUID, Decimal] = {}
             for e in snap.effects_in(snap.subtree_ids(tx.id)):
-                if e.amount is not None and e.state in EXPOSURE_EFFECT_STATES:
-                    contributions[e.transaction_id] = contributions.get(e.transaction_id, Decimal("0")) + e.amount
+                amt = e.exposure()
+                if amt is not None:
+                    contributions[e.transaction_id] = contributions.get(e.transaction_id, Decimal("0")) + amt
             total = sum(contributions.values(), Decimal("0"))
             results.append(ExposureResult(
                 capability_id=cap.id, transaction_id=tx.id, subject_id=cap.subject_id,

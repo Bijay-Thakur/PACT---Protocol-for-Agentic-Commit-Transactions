@@ -18,12 +18,14 @@ from app.persistence.models import (
     InvariantEvaluationRow,
     OperationAttemptRow,
     OperatorActionRow,
+    PlanRevisionRow,
     ReceiptRow,
     TransactionEventRow,
     TransactionRow,
 )
 from app.persistence.repositories import get_tx, iso, load_tree
 from app.runtime import Runtime
+from app.security.principals import Principal
 
 
 def _s(v: Any) -> str | None:
@@ -35,11 +37,14 @@ class QueryService:
         self.rt = rt
         self.db = rt.db
 
-    async def list_transactions(self, limit: int = 50) -> list[dict[str, Any]]:
+    async def list_transactions(self, p: Principal, limit: int = 50) -> list[dict[str, Any]]:
         async with self.db.read() as s:
-            roots = list((await s.execute(
-                select(TransactionRow).where(TransactionRow.parent_id.is_(None))
-                .order_by(TransactionRow.created_at.desc()).limit(limit))).scalars())
+            visible_roots = select(TransactionRow.root_id).where(TransactionRow.principal_id == p.id)
+            stmt = select(TransactionRow).where(TransactionRow.parent_id.is_(None),
+                                                TransactionRow.tenant_id == p.tenant_id)
+            if not p.has("tx:read_all"):
+                stmt = stmt.where(TransactionRow.id.in_(visible_roots))
+            roots = list((await s.execute(stmt.order_by(TransactionRow.created_at.desc()).limit(limit))).scalars())
             if not roots:
                 return []
             ids = [r.id for r in roots]
@@ -70,10 +75,14 @@ class QueryService:
                 "created_at": iso(r.created_at), "updated_at": iso(r.updated_at), "finalized_at": iso(r.finalized_at),
             } for r in roots]
 
-    async def detail(self, tx_id: UUID) -> dict[str, Any]:
+    async def detail(self, p: Principal, tx_id: UUID) -> dict[str, Any]:
         async with self.db.read() as s:
             tx = await get_tx(s, tx_id)
+            await self.rt.manager.assert_can_read(s, p, tx.root_id)
             rows = await load_tree(s, tx.root_id, lock=False)
+            revision = (await s.execute(select(PlanRevisionRow).where(
+                PlanRevisionRow.root_id == tx.root_id,
+                PlanRevisionRow.revision_no == rows.root.current_revision))).scalar_one_or_none()
             snap = rows.snapshot()
             effect_ids = list(rows.effects)
             attempts = list((await s.execute(
@@ -120,6 +129,12 @@ class QueryService:
             "transaction": self._tx(tx, rows, receipts),
             "root_id": str(root.id),
             "policy": root.policy,
+            "plan_revision": None if revision is None else {
+                "number": revision.revision_no, "status": revision.status,
+                "digest": revision.digest, "approval_required": revision.approval_required,
+                "approval": (revision.compiled or {}).get("approval"),
+                "issues": (revision.compile_result or {}).get("issues", []),
+            },
             "metadata": root.meta,
             "tree": [self._tx(t, rows, receipts) for t in rows.ordered_txs()],
             "capabilities": [{
@@ -183,9 +198,11 @@ class QueryService:
             "receipt_hash": receipts.get(t.id),
         }
 
-    async def events(self, tx_id: UUID, after: int = 0, limit: int = 500, scope: str = "tree") -> list[dict[str, Any]]:
+    async def events(self, p: Principal, tx_id: UUID, after: int = 0, limit: int = 500,
+                     scope: str = "tree") -> list[dict[str, Any]]:
         async with self.db.read() as s:
             tx = await get_tx(s, tx_id)
+            await self.rt.manager.assert_can_read(s, p, tx.root_id)
             stmt = select(TransactionEventRow).where(TransactionEventRow.sequence > after)
             stmt = stmt.where(TransactionEventRow.root_id == tx.root_id) if scope == "tree" else stmt.where(
                 TransactionEventRow.transaction_id == tx_id)
@@ -194,9 +211,10 @@ class QueryService:
                      "effect_id": _s(e.effect_id), "event_type": e.event_type, "actor": e.actor,
                      "payload": e.payload, "created_at": iso(e.created_at)} for e in rows]
 
-    async def receipt(self, tx_id: UUID) -> dict[str, Any]:
+    async def receipt(self, p: Principal, tx_id: UUID) -> dict[str, Any]:
         async with self.db.read() as s:
             tx = await get_tx(s, tx_id)
+            await self.rt.manager.assert_can_read(s, p, tx.root_id)
             row = (await s.execute(select(ReceiptRow).where(ReceiptRow.transaction_id == tx_id))).scalar_one_or_none()
             if row is None:
                 if TransactionState(tx.state) in TERMINAL_TX_STATES:
@@ -209,8 +227,8 @@ class QueryService:
             return {"transaction_id": str(tx_id), "sha256": row.sha256, "receipt_version": row.receipt_version,
                     "final_state": row.final_state, "created_at": iso(row.created_at), "payload": row.payload}
 
-    async def verify_receipt(self, tx_id: UUID) -> dict[str, Any]:
-        r = await self.receipt(tx_id)
+    async def verify_receipt(self, p: Principal, tx_id: UUID) -> dict[str, Any]:
+        r = await self.receipt(p, tx_id)
         recomputed = receipt_digest(r["payload"])
         return {"transaction_id": str(tx_id), "stored_sha256": r["sha256"], "recomputed_sha256": recomputed,
                 "embedded_receipt_hash": r["payload"].get("receipt_hash"),

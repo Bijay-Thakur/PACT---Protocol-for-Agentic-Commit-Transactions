@@ -1,0 +1,11 @@
+{
+  "name": "pact-mcp-node-example",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "smoke": "node client.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/client": "2.3.0"
+  }
+}

@@ -241,3 +241,134 @@ class EventType(StrEnum):
     RESTART_RECOVERY = "RESTART_RECOVERY"
     TRANSACTION_FINALIZED = "TRANSACTION_FINALIZED"
     RECEIPT_CREATED = "RECEIPT_CREATED"
+    QUARANTINED_LEGACY = "QUARANTINED_LEGACY"
+    RECEIPT_AMENDED = "RECEIPT_AMENDED"
+    TRANSACTION_ABORT_REQUESTED = "TRANSACTION_ABORT_REQUESTED"
+    EFFECT_WITHDRAWN = "EFFECT_WITHDRAWN"
+    RECOVERY_DEADLINE_EXCEEDED = "RECOVERY_DEADLINE_EXCEEDED"
+    STALE_WORKER_FENCED = "STALE_WORKER_FENCED"
+    WORK_TAKEN_OVER = "WORK_TAKEN_OVER"
+    WORK_ENQUEUED = "WORK_ENQUEUED"
+    RESIDUAL_RESOLVED = "RESIDUAL_RESOLVED"
+    RESIDUAL_RECORDED = "RESIDUAL_RECORDED"
+    OBSERVATION_RECORDED = "OBSERVATION_RECORDED"
+    BUDGET_CONSUMED = "BUDGET_CONSUMED"
+    BUDGET_HELD = "BUDGET_HELD"
+    RESERVATIONS_RELEASED = "RESERVATIONS_RELEASED"
+    RESERVATIONS_TAKEN = "RESERVATIONS_TAKEN"
+    COMMIT_REQUESTED = "COMMIT_REQUESTED"
+    APPROVAL_RECORDED = "APPROVAL_RECORDED"
+    PLAN_REVISED = "PLAN_REVISED"
+    PLAN_NEEDS_CLARIFICATION = "PLAN_NEEDS_CLARIFICATION"
+    PLAN_REJECTED = "PLAN_REJECTED"
+    PLAN_FROZEN = "PLAN_FROZEN"
+
+
+# =========================================================================== Phase 2
+# Outcome truth: three independent dimensions recorded per effect and per observation.
+
+
+class Application(StrEnum):
+    """What PACT knows about whether the external operation took effect."""
+
+    NOT_SENT = "NOT_SENT"  # never left PACT
+    NOT_APPLIED_CONFIRMED = "NOT_APPLIED_CONFIRMED"  # authoritative evidence it was not applied
+    APPLIED = "APPLIED"  # evidence the provider applied it (correctly or not)
+    UNKNOWN = "UNKNOWN"  # may or may not have been applied
+
+
+class Postcondition(StrEnum):
+    """Does the observed external state match the declared expected outcome?"""
+
+    MATCH = "MATCH"
+    MISMATCH = "MISMATCH"
+    PARTIAL = "PARTIAL"
+    UNDETERMINED = "UNDETERMINED"
+
+
+class Restoration(StrEnum):
+    NOT_REQUIRED = "NOT_REQUIRED"  # nothing applied, or restoration not requested
+    PENDING = "PENDING"  # restoration required and not yet attempted / in progress
+    RESTORED = "RESTORED"  # restoration verified against external state
+    PARTIAL = "PARTIAL"
+    RESIDUAL = "RESIDUAL"  # cannot be restored (irreversible, stale, or failed definitively)
+    UNKNOWN = "UNKNOWN"  # restoration attempt outcome unknown
+    HUMAN_ATTESTED = "HUMAN_ATTESTED"  # an operator attests restoration; not provider-verified
+
+
+class Consistency(StrEnum):
+    STRONG = "STRONG"
+    EVENTUAL = "EVENTUAL"
+
+
+class ObservationPurpose(StrEnum):
+    PREPARE = "PREPARE"
+    FRESHNESS = "FRESHNESS"
+    VERIFY = "VERIFY"
+    RECONCILE = "RECONCILE"
+    FINAL = "FINAL"
+    COMPENSATION_VERIFY = "COMPENSATION_VERIFY"
+    LATE_RESPONSE = "LATE_RESPONSE"
+
+
+class ResidualKind(StrEnum):
+    APPLIED_MISMATCH = "APPLIED_MISMATCH"
+    UNKNOWN_OUTCOME = "UNKNOWN_OUTCOME"
+    IRREVERSIBLE_CONSEQUENCE = "IRREVERSIBLE_CONSEQUENCE"
+    COMPENSATION_FAILED = "COMPENSATION_FAILED"
+    COMPENSATION_UNKNOWN = "COMPENSATION_UNKNOWN"
+    STALE_RESTORATION_BLOCKED = "STALE_RESTORATION_BLOCKED"
+    RETAINED_HISTORY = "RETAINED_HISTORY"
+
+
+class ResidualDisposition(StrEnum):
+    OPEN = "OPEN"
+    RESOLVED = "RESOLVED"  # resolved by external evidence
+    ATTESTED = "ATTESTED"  # an operator attests resolution (not provider-verified)
+    ACCEPTED = "ACCEPTED"  # policy accepts it (e.g. retained audit history)
+
+
+class PlanRevisionStatus(StrEnum):
+    DRAFT = "DRAFT"
+    NEEDS_CLARIFICATION = "NEEDS_CLARIFICATION"
+    REJECTED = "REJECTED"
+    FROZEN = "FROZEN"
+    SUPERSEDED = "SUPERSEDED"
+    EXECUTING = "EXECUTING"
+
+
+class PrincipalKind(StrEnum):
+    AGENT = "AGENT"
+    OPERATOR = "OPERATOR"
+    SERVICE = "SERVICE"
+
+
+class WorkKind(StrEnum):
+    PREPARE = "PREPARE"
+    DRIVE = "DRIVE"  # all post-barrier progress: execute, verify, reconcile, compensate, finalize
+
+
+class WorkStatus(StrEnum):
+    READY = "READY"
+    CLAIMED = "CLAIMED"
+    DONE = "DONE"
+    FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
+
+
+class ReservationStatus(StrEnum):
+    ACTIVE = "ACTIVE"
+    RELEASED = "RELEASED"
+    RETAINED = "RETAINED"  # kept because an unresolved/irreversible consequence remains
+
+
+class BudgetEntryKind(StrEnum):
+    HOLD = "HOLD"
+    RELEASE_HOLD = "RELEASE_HOLD"
+    CONSUME = "CONSUME"
+
+
+class CommitRequestStatus(StrEnum):
+    QUEUED = "QUEUED"
+    BLOCKED = "BLOCKED"
+    AWAITING_APPROVAL = "AWAITING_APPROVAL"

@@ -78,7 +78,7 @@ export function useTransactionLive(id: string | undefined) {
     };
 
     if (typeof window !== "undefined" && "EventSource" in window) {
-      es = new EventSource(api.eventStreamUrl(id, 0));
+      es = new EventSource(api.eventStreamUrl(id, 0), { withCredentials: true });
       es.addEventListener("open", () => {
         if (!cancelled) setMode("sse");
       });

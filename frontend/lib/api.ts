@@ -32,7 +32,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   try {
     res = await fetch(`${API_BASE}${path}`, {
       ...init,
-      headers: { "content-type": "application/json", ...(init?.headers || {}) },
+      credentials: "include",
+      headers: { "content-type": "application/json",
+        ...(init?.method && init.method !== "GET" && typeof window !== "undefined"
+          ? { "X-PACT-CSRF": sessionStorage.getItem("pact_csrf") || "" } : {}),
+        ...(init?.headers || {}) },
       cache: "no-store",
     });
   } catch (e) {
@@ -61,6 +65,17 @@ const post = <T>(path: string, body?: unknown) =>
   request<T>(path, { method: "POST", body: JSON.stringify(body ?? {}) });
 
 export const api = {
+  me: () => request<{ name: string; tenant_id: string; roles: string[] }>("/api/v1/auth/me"),
+  login: async (body: { tenant_id: string; username: string; password: string }) => {
+    const result = await post<{ csrf_token: string; principal: { name: string; tenant_id: string } }>(
+      "/api/v1/auth/login", body);
+    sessionStorage.setItem("pact_csrf", result.csrf_token);
+    return result;
+  },
+  logout: async () => {
+    await post("/api/v1/auth/logout");
+    sessionStorage.removeItem("pact_csrf");
+  },
   listTransactions: (limit = 50) =>
     request<{ transactions: TransactionSummary[] }>(`/api/v1/transactions?limit=${limit}`),
   getTransaction: (id: string) => request<TransactionDetail>(`/api/v1/transactions/${id}`),
@@ -71,21 +86,41 @@ export const api = {
   getReceipt: (id: string) => request<Receipt>(`/api/v1/transactions/${id}/receipt`),
   verifyReceipt: (id: string) => request<ReceiptVerify>(`/api/v1/transactions/${id}/receipt/verify`),
   prepare: (id: string) => post<{ transaction_id: string; state: string }>(`/api/v1/transactions/${id}/prepare`),
-  commit: (id: string, body: { step_delay_ms: number; background: boolean }) =>
-    post<{ transaction_id: string; state: string; decision: CommitDecision; explanation: string }>(
+  commit: (id: string, digest: string) =>
+    post<{ transaction_id: string; state: string; status: string; decision: CommitDecision }>(
       `/api/v1/transactions/${id}/commit`,
-      body,
+      { revision_digest: digest },
     ),
-  reconcile: (id: string) => post<{ transaction_id: string; state: string }>(`/api/v1/transactions/${id}/reconcile`),
-  compensate: (id: string) => post<{ transaction_id: string; state: string }>(`/api/v1/transactions/${id}/compensate`),
+  approve: (id: string, digest: string, reason: string) =>
+    post<{ transaction_id: string; state: string }>(`/api/v1/transactions/${id}/approve`,
+      { revision_digest: digest, reason }),
+  reconcile: (id: string, reason: string) =>
+    post<{ transaction_id: string; state: string }>(`/api/v1/transactions/${id}/operator-actions`,
+      { action: "RECONCILE", reason }),
+  compensate: (id: string, reason: string) =>
+    post<{ transaction_id: string; state: string }>(`/api/v1/transactions/${id}/operator-actions`,
+      { action: "RETRY_RESTORATION", reason }),
   operatorAction: (
     id: string,
-    body: { operator_id: string; action: OperatorActionType; note: string; effect_id?: string },
+    body: { action: OperatorActionType; reason: string; residual_id?: string },
   ) => post<{ transaction_id: string; state: string }>(`/api/v1/transactions/${id}/operator-actions`, body),
+  proposeIntent: (intent: string) => post<{
+    provider: string; live: boolean; model: string | null; usage: Record<string, number> | null;
+    proposed_plan: {
+      objective: string; requested_workflow: string; entity_references: Record<string, string>;
+      candidate_actions: string[]; requested_parameters: Record<string, string>;
+      unresolved_questions: string[];
+    };
+  }>("/api/v1/planner/propose", { intent }),
+  reviewIntent: (proposal: unknown) => post<{
+    status: string; workflow: string; business_request: Record<string, unknown> | null;
+    required_slots: string[]; issues: { code: string; [key: string]: unknown }[];
+    authorized_to_begin: boolean; next_action: string;
+  }>("/api/v1/planner/review", { proposal }),
   listScenarios: () => request<{ scenarios: Scenario[] }>(`/api/v1/demo/scenarios`),
   runScenario: (key: string, body: RunRequest) => post<RunResponse>(`/api/v1/demo/run/${key}`, body),
-  externalState: (customerId: string) =>
-    request<ExternalState>(`/api/v1/demo/external-state/${encodeURIComponent(customerId)}`),
+  externalState: (transactionId: string) =>
+    request<ExternalState>(`/api/v1/demo/external-state/${encodeURIComponent(transactionId)}`),
 };
 
 export type DraftReceipt = { state: string; draft: ReceiptPayload };

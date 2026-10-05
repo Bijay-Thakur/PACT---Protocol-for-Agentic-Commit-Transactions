@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
 import "./globals.css";
+import { AuthGate } from "@/components/AuthGate";
 
 export const metadata: Metadata = {
   title: "PACT Console",
@@ -39,7 +40,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
             </div>
           </header>
         </div>
-        <main className="mx-auto max-w-[1600px] px-6 py-6">{children}</main>
+        <main className="mx-auto max-w-[1600px] px-6 py-6"><AuthGate>{children}</AuthGate></main>
       </body>
     </html>
   );

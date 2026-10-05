@@ -36,7 +36,7 @@ def test_idempotency_key_is_stable_per_logical_operation():
 
 
 class _Probe(HttpAdapter):
-    pass
+    from app.adapters.billing_mock import CONTRACT as contract
 
 
 async def _classify(handler, timeout=0.2):
@@ -48,8 +48,8 @@ async def _classify(handler, timeout=0.2):
 @pytest.mark.parametrize("status,outcome", [
     (201, DispatchOutcome.ACCEPTED),
     (422, DispatchOutcome.REJECTED_DEFINITIVE),
-    (503, DispatchOutcome.REJECTED_RETRYABLE),
-    (429, DispatchOutcome.REJECTED_RETRYABLE),
+    (503, DispatchOutcome.RESPONSE_LOST),
+    (429, DispatchOutcome.RESPONSE_LOST),
     (500, DispatchOutcome.RESPONSE_LOST),  # ambiguous: may have been applied
 ])
 async def test_dispatch_classification(status, outcome):

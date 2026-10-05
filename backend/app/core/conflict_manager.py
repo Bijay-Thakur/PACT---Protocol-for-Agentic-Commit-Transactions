@@ -20,7 +20,8 @@ from typing import Callable
 
 from app.core.effect_graph import EffectGraph
 from app.core.snapshot import EffectNode, TreeSnapshot
-from app.core.state_machine import EXPOSURE_EFFECT_STATES
+from app.core.state_machine import LIVE_UNSENT_STATES
+from app.domain.enums import Application
 from app.domain.effect import EffectContract
 from app.domain.enums import ClaimMode
 
@@ -40,11 +41,14 @@ class Conflict:
 def detect_conflicts(
     snap: TreeSnapshot, graph: EffectGraph, contract_of: Callable[[str], EffectContract | None],
 ) -> list[Conflict]:
-    live = [e for e in snap.effects if e.state in EXPOSURE_EFFECT_STATES]
+    def holds_claim(e: EffectNode) -> bool:  # applied/unknown consequences keep their claims
+        return e.application in (Application.APPLIED, Application.UNKNOWN) or e.state in LIVE_UNSENT_STATES
+
+    live = [e for e in snap.effects if holds_claim(e)]
     out: list[Conflict] = []
 
     for key, effects in sorted(snap.effect_by_key().items()):
-        if len([e for e in effects if e.state in EXPOSURE_EFFECT_STATES]) > 1:
+        if len([e for e in effects if holds_claim(e)]) > 1:
             out.append(Conflict("DUPLICATE_OPERATION_KEY", f"operation {key} proposed {len(effects)} times",
                                 operation_keys=[key]))
 
