@@ -15,3 +15,5 @@ docker-compose.override.yml
 PACT_Concrete_System_Build_Plan.md
 PACT_Master_Build_Prompt.md
 PACT_Phase_2_Build_Plan_and_Master_Prompt.md
+docs/phase2_1/
+
