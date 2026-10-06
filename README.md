@@ -92,9 +92,9 @@ docs/                   architecture, protocol, state machines, ADRs, demo, vali
 scripts/                demo scripts
 ```
 
-## Model integration (NVIDIA Nemotron or any other model)
+## Model integration (Groq active; NVIDIA Nemotron ready for owner key)
 
-`backend/app/agents/model_provider.py` defines a bounded `PlanProposal` output. The deterministic fixture, Groq, generic OpenAI-compatible endpoint, and explicit Nebius/Nemotron mode are supported. Groq can use `GROQ_API_KEY` from the private environment. `POST /api/v1/planner/propose` only returns a proposal: **model proposes → PACT validates → PACT decides.** The workflow catalog is sent to the selected model only when `PACT_PLANNER_SHARE_WORKFLOW_CATALOG=true`.
+`backend/app/agents/model_provider.py` defines a bounded `PlanProposal` output. Select `PACT_MODEL_PROFILE=groq_dev` with `GROQ_API_KEY` for the current live profile, or `nebius_nemotron` with `NEBIUS_API_KEY` for NVIDIA Nemotron on Nebius. `POST /api/v1/planner/propose` only returns a proposal: **model proposes → PACT validates → PACT decides.** The workflow catalog is sent to the selected model only when `PACT_PLANNER_SHARE_WORKFLOW_CATALOG=true`. See the [Phase 2.1 checklist](docs/phase2_1/implementation-checklist.md) for exact setup, tests and unverified live gates.
 
 ## Documentation
 
@@ -106,4 +106,4 @@ scripts/                demo scripts
 
 ## Known limitations
 
-See the [Phase 2 acceptance matrix](docs/phase2/implementation-checklist.md#acceptance-matrix). Agents and operators are authenticated, and durable workers handle recovery. The verified business providers are simulated, receipts are hashed but not signed, and live Nebius/NVIDIA inference, actual Code Council integration, enforcement isolation, and a browser walkthrough remain open.
+See the [Phase 2.1 acceptance matrix](docs/phase2_1/implementation-checklist.md#acceptance-matrix) and preserved [Phase 2 matrix](docs/phase2/implementation-checklist.md#acceptance-matrix). Agents and operators are authenticated, and durable workers handle recovery. The verified business providers are simulated, receipts are hashed but not signed, and live Nebius/NVIDIA inference, actual Code Council integration, enforcement isolation, and a browser walkthrough remain open.

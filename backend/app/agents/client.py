@@ -35,11 +35,12 @@ class HttpPactClient:
             raise PactApiError(resp.status_code, body)
         return body
 
-    async def create_transaction(self, spec: dict[str, Any]) -> dict[str, Any]:
-        return await self._req("POST", "/transactions", spec)
+    async def create_transaction(self, spec: dict[str, Any], request_id: str | None = None) -> dict[str, Any]:
+        return await self._req("POST", "/transactions", spec, request_id=request_id)
 
-    async def create_child(self, parent_id: str, spec: dict[str, Any]) -> dict[str, Any]:
-        return await self._req("POST", f"/transactions/{parent_id}/children", spec)
+    async def create_child(self, parent_id: str, spec: dict[str, Any],
+                           request_id: str | None = None) -> dict[str, Any]:
+        return await self._req("POST", f"/transactions/{parent_id}/children", spec, request_id=request_id)
 
     async def propose_effect(self, tx_id: str, proposal: dict[str, Any]) -> dict[str, Any]:
         return await self._req("POST", f"/transactions/{tx_id}/effects", proposal)
@@ -47,12 +48,10 @@ class HttpPactClient:
     async def prepare(self, tx_id: str) -> dict[str, Any]:
         return await self._req("POST", f"/transactions/{tx_id}/prepare")
 
-    async def commit(self, tx_id: str, *, step_delay_ms: int = 0, background: bool = False) -> dict[str, Any]:
+    async def commit(self, tx_id: str, revision_digest: str, *, step_delay_ms: int = 0) -> dict[str, Any]:
+        """Compatibility alias that still requires the exact reviewed digest."""
         return await self._req("POST", f"/transactions/{tx_id}/commit",
-                               {"step_delay_ms": step_delay_ms, "background": background})
-
-    async def reconcile(self, tx_id: str) -> dict[str, Any]:
-        return await self._req("POST", f"/transactions/{tx_id}/reconcile")
+                               {"revision_digest": revision_digest, "step_delay_ms": step_delay_ms})
 
     async def get(self, tx_id: str) -> dict[str, Any]:
         return await self._req("GET", f"/transactions/{tx_id}")
@@ -65,21 +64,25 @@ class HttpPactClient:
 
     # Phase 2 convenience methods. Identity comes from the API key, and approval
     # remains an operator-only route rather than an agent convenience method.
-    async def list_contracts(self) -> dict[str, Any]:
-        return await self._req("GET", "/contracts")
+    async def list_contracts(self, transaction_id: str | None = None) -> dict[str, Any]:
+        return await self._req("GET", "/contracts", params={"transaction_id": transaction_id} if transaction_id else None)
+
+    async def list_workflows(self, transaction_id: str | None = None) -> dict[str, Any]:
+        return await self._req("GET", "/workflows", params={"transaction_id": transaction_id} if transaction_id else None)
 
     async def begin(self, workflow: str, business_request: dict[str, Any],
-                    objective: str | None = None) -> dict[str, Any]:
+                    objective: str | None = None, request_id: str | None = None) -> dict[str, Any]:
         return await self.create_transaction({"workflow": workflow,
                                               "business_request": business_request,
-                                              "objective": objective})
+                                              "objective": objective}, request_id=request_id)
 
     async def delegate(self, parent_id: str, recipient: str, objective: str,
-                       capability: dict[str, Any], required: bool = True) -> dict[str, Any]:
+                       capability: dict[str, Any], required: bool = True,
+                       request_id: str | None = None) -> dict[str, Any]:
         return await self.create_child(parent_id, {"recipient": recipient,
                                                     "objective": objective,
                                                     "capability": capability,
-                                                    "required": required})
+                                                    "required": required}, request_id=request_id)
 
     async def propose(self, tx_id: str, effect_type: str, slot: str,
                       payload: dict[str, Any], request_id: str,
@@ -93,6 +96,13 @@ class HttpPactClient:
     async def request_commit(self, tx_id: str, revision_digest: str) -> dict[str, Any]:
         return await self._req("POST", f"/transactions/{tx_id}/commit",
                                {"revision_digest": revision_digest})
+
+    async def revise(self, tx_id: str, reason: str) -> dict[str, Any]:
+        return await self._req("POST", f"/transactions/{tx_id}/revise", {"reason": reason})
+
+    async def withdraw(self, tx_id: str, effect_id: str, reason: str) -> dict[str, Any]:
+        return await self._req("POST", f"/transactions/{tx_id}/effects/{effect_id}/withdraw",
+                               {"reason": reason})
 
     async def status(self, tx_id: str) -> dict[str, Any]:
         return await self.get(tx_id)

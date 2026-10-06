@@ -133,6 +133,8 @@ class QueryService:
                 "number": revision.revision_no, "status": revision.status,
                 "digest": revision.digest, "approval_required": revision.approval_required,
                 "approval": (revision.compiled or {}).get("approval"),
+                "projection": (revision.compiled or {}).get("projection"),
+                "required_outcomes": (revision.compiled or {}).get("outcomes", []),
                 "issues": (revision.compile_result or {}).get("issues", []),
             },
             "metadata": root.meta,

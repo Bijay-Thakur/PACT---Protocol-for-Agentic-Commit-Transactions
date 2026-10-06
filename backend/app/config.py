@@ -53,6 +53,21 @@ class Settings:
         )
     )
     planner_provider: str = field(default_factory=lambda: _env("PACT_PLANNER_PROVIDER", "deterministic"))
+    model_profile: str = field(default_factory=lambda: _env("PACT_MODEL_PROFILE", ""))
+    nebius_base_url: str = field(default_factory=lambda: _env(
+        "PACT_NEBIUS_BASE_URL", "https://api.tokenfactory.nebius.com/v1/"))
+    nebius_model: str = field(default_factory=lambda: _env(
+        "PACT_NEBIUS_MODEL", "nvidia/nemotron-3-super-120b-a12b"))
+    groq_base_url: str = field(default_factory=lambda: _env(
+        "PACT_GROQ_BASE_URL", "https://api.groq.com/openai/v1"))
+    groq_model: str = field(default_factory=lambda: _env("PACT_GROQ_MODEL", "openai/gpt-oss-20b"))
+    nebius_response_format: str = field(default_factory=lambda: _env("PACT_NEBIUS_RESPONSE_FORMAT", "json_schema"))
+    model_max_input_chars: int = field(default_factory=lambda: int(_env("PACT_MODEL_MAX_INPUT_CHARS", "8000")))
+    model_max_output_tokens: int = field(default_factory=lambda: int(_env("PACT_MODEL_MAX_OUTPUT_TOKENS", "600")))
+    model_max_requests_per_hour: int = field(default_factory=lambda: int(_env("PACT_MODEL_MAX_REQUESTS_PER_HOUR", "60")))
+    model_max_reserved_tokens_per_hour: int = field(default_factory=lambda: int(
+        _env("PACT_MODEL_MAX_RESERVED_TOKENS_PER_HOUR", "200000")))
+    model_max_inflight: int = field(default_factory=lambda: int(_env("PACT_MODEL_MAX_INFLIGHT", "2")))
     planner_base_url: str = field(default_factory=lambda: _env("PACT_PLANNER_BASE_URL", ""))
     planner_model: str = field(default_factory=lambda: _env("PACT_PLANNER_MODEL", ""))
     planner_api_key: str = field(default_factory=lambda: _env("PACT_PLANNER_API_KEY", ""))

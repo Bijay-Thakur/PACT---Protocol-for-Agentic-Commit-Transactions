@@ -8,6 +8,8 @@ __pycache__/
 node_modules/
 frontend/.next/
 frontend/out/
+frontend/test-results/
+frontend/playwright-report/
 .local/
 docker-compose.override.yml
 PACT_Concrete_System_Build_Plan.md

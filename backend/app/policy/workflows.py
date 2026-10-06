@@ -44,6 +44,7 @@ class DraftEffect:
     client_operation_key: str | None
     prepare_evidence: dict[str, Any]
     prepared: bool
+    prior_identity: str | None = None
 
 
 @dataclass
@@ -117,13 +118,15 @@ class CompileResult:
     approval: dict[str, Any] = field(default_factory=lambda: {"required": False})
     business_request_key: str = ""
     skipped: list[dict[str, str]] = field(default_factory=list)
+    outcomes: list[dict[str, Any]] = field(default_factory=list)
     plan: dict[str, Any] = field(default_factory=dict)
     digest: str | None = None
 
     def summary(self) -> dict[str, Any]:
         return {"status": self.status, "issues": [i.as_dict() for i in self.issues], "digest": self.digest,
                 "approval": self.approval, "business_request_key": self.business_request_key,
-                "skipped": self.skipped, "budgets": [{**b, "limit": str(b["limit"])} for b in self.budgets]}
+                "skipped": self.skipped, "outcomes": self.outcomes,
+                "budgets": [{**b, "limit": str(b["limit"])} for b in self.budgets]}
 
 
 # --------------------------------------------------------------------------- helpers
@@ -224,6 +227,7 @@ class Workflow:
         for c in compiled:
             by_slot.setdefault(c.slot, []).append(c)
         client_keys = {e.client_operation_key: e.id for e in inp.effects if e.client_operation_key}
+        prior_identities = {e.prior_identity: e.id for e in inp.effects if e.prior_identity}
         for c in compiled:
             deps: set[UUID] = set()
             for slot_name in c.depends_on_slots:
@@ -234,6 +238,8 @@ class Workflow:
                     deps |= {x.effect_id for x in by_slot[d]}
                 elif d in client_keys:
                     deps.add(client_keys[d])
+                elif d in prior_identities:
+                    deps.add(prior_identities[d])
                 else:
                     issues.append(Issue("DEPENDENCY_UNRESOLVED", f"dependency {d!r} matches no slot or effect",
                                         effect_id=str(c.effect_id)))
@@ -263,6 +269,19 @@ class Workflow:
 
     def _plan_document(self, inp: CompileInput, r: CompileResult) -> dict[str, Any]:
         """Everything material to execution. Approval binds the digest of this document."""
+        projection = {"version": "Projection/v1",
+                      "mode": "ISOLATED_CANDIDATE" if self.key == "code_sandbox_change"
+                              else "CONTRACT_PROJECTED",
+                      "required_outcomes": r.outcomes,
+                      "expected_changes": [{"effect_id": str(c.effect_id), "slot": c.slot,
+                                            "effect_type": c.effect_type,
+                                            "resource": c.claims[0]["resource"] if c.claims else None,
+                                            "amount": str(c.amount) if c.amount is not None else None,
+                                            "currency": c.currency,
+                                            "preconditions": c.preconditions}
+                                           for c in sorted(r.effects, key=lambda c: (c.slot, str(c.effect_id)))],
+                      "assumptions": ["Provider preconditions are rechecked before dispatch."],
+                      "unsupported_predictions": ["External application is not known until observed."]}
         return {
             "workflow": {"key": self.key, "version": self.version, "policy_version": self.policy_version},
             "tenant_id": inp.tenant_id, "root_id": str(inp.root_id), "root_actor": inp.root_actor,
@@ -283,7 +302,8 @@ class Workflow:
             } for cap in sorted(inp.caps, key=lambda c: (c.subject, str(c.transaction_id)))],
             "invariants": [i.model_dump(mode="json") for i in sorted(r.invariants, key=lambda i: i.key)],
             "budgets": [{**b, "limit": b["limit"]} for b in sorted(r.budgets, key=lambda b: b["key"])],
-            "approval": r.approval, "skipped": r.skipped,
+            "approval": r.approval, "skipped": r.skipped, "outcomes": r.outcomes,
+            "projection": projection,
         }
 
 
@@ -347,8 +367,8 @@ class OffboardingParams(BaseModel):
 
 class CustomerOffboarding(Workflow):
     key = "customer_offboarding"
-    version = "1.0.0"
-    policy_version = "offboarding-policy/2026-10-03"
+    version = "1.1.0"
+    policy_version = "offboarding-policy/2026-10-05"
     title = "Customer offboarding"
     description = ("Cancel the subscription, revoke premium access, mark the CRM account churned, refund the "
                    "eligible unused period, and confirm to the customer only after the business effects verify.")
@@ -416,9 +436,9 @@ class CustomerOffboarding(Workflow):
                 c = _base_effect(e, slot["refund_unused"], registry, issues)
                 if not c:
                     continue
-                if c.amount is not None and c.amount > eligible:
-                    issues.append(Issue("REFUND_EXCEEDS_ELIGIBLE",
-                                        f"refund {c.amount} exceeds the eligible unused value {eligible}",
+                if c.amount is not None and c.amount != eligible:
+                    issues.append(Issue("REFUND_AMOUNT_MISMATCH",
+                                        f"offboarding requires the full eligible unused value {eligible} USD; proposed {c.amount}",
                                         slot="refund_unused", effect_id=str(e.id)))
                 elif c.amount is not None and c.amount <= 0:
                     issues.append(Issue("INVALID_AMOUNT", "refund must be positive", slot="refund_unused"))
@@ -453,8 +473,18 @@ class CustomerOffboarding(Workflow):
             budgets.append({"key": f"budget/principal:{inp.root_actor}/refunds/{inp.now.date().isoformat()}",
                             "limit": money(inp.grant["daily_refund_limit"]), "currency": "USD",
                             "slot": "refund_unused", "description": "Daily refund authority of the initiating principal"})
-        return self._finish(inp, registry, issues, list(compiled.values()), offboarding_invariants(), budgets,
-                            approval, brk, skipped)
+        result = self._finish(inp, registry, issues, list(compiled.values()), offboarding_invariants(), budgets,
+                              approval, brk, skipped)
+        if eligible is not None:
+            result.outcomes = [{"id": "full_eligible_refund", "subject": cid,
+                                "predicate": "observed_refund_equals", "amount": str(eligible), "currency": "USD",
+                                "evidence": "final_billing_observation",
+                                "effect_id": str(compiled["refund_unused"].effect_id) if "refund_unused" in compiled else None,
+                                "omission_permitted": eligible == 0}]
+            if result.status == "COMPILED":
+                result.plan = self._plan_document(inp, result)
+                result.digest = digest(result.plan)
+        return result
 
 
 def offboarding_invariants() -> list[InvariantDefinition]:

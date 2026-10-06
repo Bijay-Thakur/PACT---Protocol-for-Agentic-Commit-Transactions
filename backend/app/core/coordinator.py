@@ -79,6 +79,7 @@ from app.persistence.models import (
 )
 from app.persistence.repositories import TreeRows, append_event, effect_view, get_tx, load_tree
 from app.policy.workflows import CompileInput, DraftCap, DraftEffect, Issue, WorkflowRegistry
+from app.policy.digest import fingerprint
 from app.security.principals import Forbidden, Principal
 from app.telemetry.tracing import span
 
@@ -169,11 +170,14 @@ class Coordinator:
         """
         problems = []
         principal_ids = {t.principal_id for t in rows.txs.values() if t.principal_id}
-        status = {r.id: r.status for r in (await s.execute(select(PrincipalRow).where(
-            PrincipalRow.id.in_(principal_ids)))).scalars()}
+        principals = {r.id: r for r in (await s.execute(select(PrincipalRow).where(
+            PrincipalRow.id.in_(sorted(principal_ids, key=str))).with_for_update())).scalars()}
         for t in rows.txs.values():
-            if t.principal_id and status.get(t.principal_id) != "ACTIVE":
+            if t.principal_id and (t.principal_id not in principals or principals[t.principal_id].status != "ACTIVE"):
                 problems.append(f"principal {t.actor_id} is revoked")
+        initiator = principals.get(rows.root.principal_id)
+        if initiator is not None and (initiator.grants.get("workflows") or {}).get(rows.root.workflow) is None:
+            problems.append("initiating workflow grant revoked")
         now = self.manager.clock()
         for c in rows.caps.values():
             if c.expires_at is not None and c.expires_at <= now:
@@ -195,7 +199,9 @@ class Coordinator:
         now = self.manager.clock()
         considered = []
         for a in rows:
-            approver = await s.get(PrincipalRow, a.approver_principal_id)
+            approver = (await s.execute(select(PrincipalRow).where(
+                PrincipalRow.id == a.approver_principal_id).with_for_update())).scalar_one_or_none() if at_dispatch else \
+                await s.get(PrincipalRow, a.approver_principal_id)
             why = None
             if a.digest != revision.digest or a.revision_id != revision.id:
                 why = "bound to a different revision digest"
@@ -205,6 +211,12 @@ class Coordinator:
                 why = "expired"
             elif approver is None or approver.status != "ACTIVE":
                 why = "approver revoked"
+            elif "op:approve" not in (approver.scopes or []) and "admin" not in (approver.scopes or []):
+                why = "approval scope removed"
+            elif role not in (approver.grants or {}).get("roles", []):
+                why = "approver role removed"
+            elif a.authorization_epoch != approver.authorization_epoch:
+                why = "approver authority changed since approval"
             elif a.role != role:
                 why = f"role {a.role} != required {role}"
             considered.append({"approver": a.approver_name, "digest": a.digest[:12], "valid": why is None,
@@ -234,17 +246,33 @@ class Coordinator:
         if tx_id != root_id:
             async with self.db.read() as s:
                 return {"transaction_id": str(tx_id), "state": (await get_tx(s, tx_id)).state, "scope": "local"}
-        await self._prepare_local(root_id, root_id)
-        return await self._compile(root_id)
+        generation = await self._prepare_local(root_id, root_id)
+        async with self.db.read() as s:
+            root = await s.get(TransactionRow, root_id)
+            if root.state == T.SPECIFYING and (root.meta or {}).get("prepare_failures"):
+                return {"transaction_id": str(root_id), "status": "REJECTED", "state": root.state,
+                        "issues": [{"code": "LOCAL_PREPARE_FAILED", "detail": reason}
+                                   for reason in root.meta["prepare_failures"]],
+                        "next_action": "REVISE_AUTHORITY_OR_DRAFT"}
+        if generation is None:
+            async with self.db.read() as s:
+                root = await s.get(TransactionRow, root_id)
+                if root.state != T.PREPARED:
+                    return {"transaction_id": str(root_id), "status": "PREPARING",
+                            "state": root.state, "next_action": "WAIT_FOR_ACTIVE_PREPARATION"}
+        return await self._compile(root_id, generation)
 
-    async def _prepare_local(self, root_id: UUID, tx_id: UUID) -> None:
+    async def _prepare_local(self, root_id: UUID, tx_id: UUID) -> int | None:
         """Local validity: own capability + read-only provider preconditions. Never mutates externally."""
         with span("transaction.prepare", transaction_id=tx_id, root_id=root_id):
             async with self.db.uow() as s:
                 rows = await load_tree(s, root_id, lock=True)
                 tx = rows.txs[tx_id]
                 if T(tx.state) not in SPECIFIABLE:
-                    return
+                    return None
+                tx.prepare_generation += 1
+                generation = tx.prepare_generation
+                revision = rows.root.current_revision
                 if tx.state == T.CREATED:
                     self.manager.transition_tx(s, tx, T.SPECIFYING, "specification closed by prepare")
                 self.manager.transition_tx(s, tx, T.PREPARING, "local authority and read-only preconditions")
@@ -262,6 +290,8 @@ class Coordinator:
                         "violations": [v.model_dump() for v in violations], "scope": "local (delegated capability)",
                     }, effect_id=e.id)
                 views = {eid: effect_view(rows.effects[eid]) for eid in local}
+                fingerprints = {eid: (fingerprint(rows.effects[eid].payload), dict(rows.effects[eid].payload))
+                                for eid in views}
             prepared = {}
             for eid, view in views.items():
                 if not local[eid]:
@@ -269,10 +299,14 @@ class Coordinator:
             async with self.db.uow() as s:
                 rows = await load_tree(s, root_id, lock=True)
                 tx = rows.txs[tx_id]
-                if T(tx.state) != T.PREPARING:
+                if T(tx.state) != T.PREPARING or tx.prepare_generation != generation \
+                        or rows.root.current_revision != revision or any(
+                            eid not in rows.effects or fingerprint(rows.effects[eid].payload) != fp
+                            or rows.effects[eid].payload != payload or E(rows.effects[eid].state) != E.VALIDATED
+                            for eid, (fp, payload) in fingerprints.items()):
                     # A sweeper may have reset a stalled read-only prepare while
                     # the provider read was outstanding. Discard that stale read.
-                    return
+                    return None
                 failures: list[str] = []
                 for eid in sorted(views, key=lambda i: str(i)):
                     eff = rows.effects[eid]
@@ -289,21 +323,30 @@ class Coordinator:
                         "observations": result.observations, "resolved": result.resolved,
                         "preconditions": result.preconditions,
                         "max_exposure": str(result.max_exposure) if result.max_exposure is not None else None,
-                        "prepared_at": self.manager.clock().isoformat(), "provenance": self.ctx.provenance}
+                        "prepared_at": self.manager.clock().isoformat(), "provenance": self.ctx.provenance,
+                        "prepare_generation": generation, "draft_revision": revision,
+                        "payload_fingerprint": fingerprints[eid][0]}
                     self.manager.transition_effect(s, tx, eff, E.PREPARED, "local authority valid; preconditions hold",
                                                    event_type=EventType.EFFECT_PREPARED,
                                                    observations=result.observations, resolved=result.resolved)
                 if failures:
                     # The draft stays open: the agent can withdraw / re-propose. Nothing is aborted.
+                    tx.meta = {**(tx.meta or {}), "prepare_failures": failures}
                     self.manager.transition_tx(s, tx, T.SPECIFYING, "local prepare failed", failures=failures)
                 elif tx_id != root_id:
+                    tx.meta = {**(tx.meta or {}), "prepare_failures": []}
                     self.manager.transition_tx(s, tx, T.PREPARED, "locally prepared")
+                else:
+                    tx.meta = {**(tx.meta or {}), "prepare_failures": []}
+                return generation
 
-    async def _compile(self, root_id: UUID) -> dict[str, Any]:
+    async def _compile(self, root_id: UUID, expected_generation: int | None = None) -> dict[str, Any]:
         with span("plan.compile", transaction_id=root_id, root_id=root_id):
             async with self.db.uow() as s:
                 rows = await load_tree(s, root_id, lock=True)
                 root = rows.root
+                if expected_generation is not None and root.prepare_generation != expected_generation:
+                    raise StateConflict("preparation was superseded", code="STALE_PREPARATION")
                 if root.state == T.PREPARED:
                     rev = await self._frozen_revision(s, root)
                     return self._revision_summary(root, rev)
@@ -328,7 +371,9 @@ class Coordinator:
                                          declared_depends_on=list(e.depends_on or []),
                                          client_operation_key=e.client_operation_key,
                                          prepare_evidence=dict(e.prepare_evidence or {}),
-                                         prepared=E(e.state) == E.PREPARED) for e in live],
+                                         prepared=E(e.state) == E.PREPARED,
+                                         prior_identity=e.operation_key if e.revision_no is not None else None)
+                             for e in live],
                     caps=[DraftCap(transaction_id=c.transaction_id, subject=c.subject_id,
                                    allowed_effect_types=list(c.scope["allowed_effect_types"]),
                                    allowed_resources=list(c.scope["allowed_resources"]),
@@ -437,6 +482,7 @@ class Coordinator:
 
     def _reopen_draft(self, s: AsyncSession, rows: TreeRows, reason: str) -> None:
         for t in rows.ordered_txs():
+            t.prepare_generation += 1
             if T(t.state) in (T.PREPARED, T.PREPARING):
                 self.manager.transition_tx(s, t, T.SPECIFYING, reason)
         for e in rows.effects.values():
@@ -468,9 +514,12 @@ class Coordinator:
             rev = await self._frozen_revision(s, root)
             rev.status = str(PlanRevisionStatus.SUPERSEDED)
             root.current_revision += 1
+            current_workflow = self.workflows.get(root.workflow)
+            root.workflow_version = current_workflow.version
             s.add(PlanRevisionRow(tenant_id=root.tenant_id, root_id=root.id, revision_no=root.current_revision,
                                   status=str(PlanRevisionStatus.DRAFT), workflow=root.workflow,
-                                  workflow_version=root.workflow_version, policy_version=rev.policy_version,
+                                  workflow_version=current_workflow.version,
+                                  policy_version=current_workflow.policy_version,
                                   created_by=p.id))
             self._reopen_draft(s, rows, f"revision requested: {reason}")
             append_event(s, root, EventType.PLAN_REVISED, {"superseded": rev.revision_no, "digest": rev.digest,
@@ -501,12 +550,16 @@ class Coordinator:
                 raise StateConflict("approval digest does not match the current frozen revision",
                                     code="REVISION_DIGEST_MISMATCH", details={"current": rev.digest})
             role = (rev.compiled or {}).get("approval", {}).get("role") or "approver"
-            if role not in p.roles:
+            current = (await s.execute(select(PrincipalRow).where(
+                PrincipalRow.id == p.id).with_for_update())).scalar_one_or_none()
+            if current is None or current.status != "ACTIVE" or role not in (current.grants or {}).get("roles", []) \
+                    or "op:approve" not in (current.scopes or []):
                 raise Forbidden(f"approver lacks role {role!r}", code="APPROVER_ROLE_MISSING")
             ttl = timedelta(minutes=float(self.settings.approval_ttl_minutes))
             s.add(ApprovalRow(tenant_id=root.tenant_id, root_id=root.id, revision_id=rev.id, digest=rev.digest,
                               approver_principal_id=p.id, approver_name=p.name, role=role, reason=req.reason,
-                              expires_at=self.manager.clock() + ttl))
+                              expires_at=self.manager.clock() + ttl,
+                              authorization_epoch=current.authorization_epoch))
             await self.manager.record_operator_action(s, root, p, "APPROVE", req.reason,
                                                       payload={"digest": rev.digest, "role": role})
             append_event(s, root, EventType.APPROVAL_RECORDED, {"digest": rev.digest, "approver": p.name, "role": role,
@@ -556,6 +609,9 @@ class Coordinator:
             if rev.digest != req.revision_digest:
                 raise StateConflict("requested digest is not the current frozen revision",
                                     code="REVISION_DIGEST_MISMATCH", details={"current": rev.digest})
+            if root.workflow == "customer_offboarding" and rev.policy_version != self.workflows.get(root.workflow).policy_version:
+                raise StateConflict("offboarding policy changed; revise and prepare before dispatch",
+                                    code="POLICY_REVISION_REQUIRED")
             rows = await load_tree(s, root_id, lock=False)
             views = [effect_view(e) for e in rows.effects.values() if E(e.state) == E.PREPARED]
         stale: dict[str, Any] = {}
@@ -579,7 +635,7 @@ class Coordinator:
                                           detail="all frozen preconditions still hold" if not stale
                                           else "provider state changed since the plan was frozen; revise",
                                           observed={"stale": stale}, blocking_reason=None if not stale else "STALE_PLAN"))
-                ok, info = await self._approval_status(s, root, rev)
+                ok, info = await self._approval_status(s, root, rev, at_dispatch=True)
                 extra.append(BarrierCheck(code="APPROVAL_BOUND_TO_DIGEST", passed=ok,
                                           detail=info.get("reason", "approved" if info.get("required") else "not required"),
                                           observed=info, blocking_reason=None if ok else "APPROVAL_REQUIRED"))
@@ -966,6 +1022,8 @@ class Coordinator:
                 rows = await load_tree(s, root_id, lock=True)
                 root = rows.root
                 final_ids, drift = [], []
+                rev = await self._frozen_revision(s, root)
+                required_outcomes = (rev.compiled or {}).get("outcomes", []) if rev else []
                 for eid, obs in observations.items():
                     eff = rows.effects[eid]
                     row = self.ctx.evidence.record_observation(s, eff, obs, ObservationPurpose.FINAL)
@@ -982,6 +1040,17 @@ class Coordinator:
                             s, rows.txs[eff.transaction_id], eff, ResidualKind.APPLIED_MISMATCH,
                             f"state no longer matches at final verification: {obs.reason}",
                             "Investigate the later change; restore or accept.", observation_id=row.id)
+                    for requirement in required_outcomes:
+                        if requirement.get("effect_id") != str(eid):
+                            continue
+                        if requirement.get("predicate") == "observed_refund_equals" and (
+                                str(obs.observed_amount) != requirement["amount"]
+                                or obs.application != Application.APPLIED):
+                            drift.append(eff.operation_key)
+                            self.ctx.evidence.open_residual(
+                                s, rows.txs[eff.transaction_id], eff, ResidualKind.APPLIED_MISMATCH,
+                                "final refund does not satisfy the frozen required amount",
+                                "Investigate actual provider amount.", observation_id=row.id)
                 root.meta = {**(root.meta or {}), "final_observation_ids": sorted(final_ids)}
                 snap = rows.snapshot()
                 graph = EffectGraph([e for e in snap.effects if e.state != E.ABORTED])
@@ -1149,6 +1218,7 @@ class Coordinator:
                 tx = rows.txs[tx_id]
                 cutoff = self.manager.clock() - timedelta(seconds=prepare_stall_s)
                 if T(tx.state) == T.PREPARING and tx.updated_at < cutoff:
+                    tx.prepare_generation += 1
                     self.manager.transition_tx(s, tx, T.SPECIFYING,
                                                "stalled read-only preparation reset by the sweeper")
                     report["prepare_reset"].append(str(tx_id))

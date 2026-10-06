@@ -19,6 +19,7 @@ UNKNOWN (no retry until reconciliation).
 
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Awaitable, Callable
 from uuid import UUID
 
@@ -28,7 +29,7 @@ from sqlalchemy import select
 from app.adapters.base import AdapterContext
 from app.adapters.registry import EffectRegistry, UnsupportedContractVersion
 from app.core.effect_graph import EffectGraph
-from app.core.evidence import EvidenceLedger, execute_attempts
+from app.core.evidence import EvidenceLedger, execute_attempts, retry_eligibility
 from app.core.transaction_manager import TransactionManager
 from app.core.work_queue import Claim, StaleWorker, WorkQueue
 from app.domain.enums import (
@@ -45,7 +46,7 @@ from app.domain.enums import (
 from app.domain.errors import StateConflict
 from app.domain.verification import Observation
 from app.persistence.db import Database
-from app.persistence.models import LogicalOperationRow, OperationAttemptRow
+from app.persistence.models import LogicalOperationRow, OperationAttemptRow, ObservationRow
 from app.persistence.repositories import append_event, effect_view, load_tree, next_attempt_no
 from app.telemetry.tracing import span
 
@@ -122,12 +123,35 @@ class Executor:
             contract = c.registry.contract(eff.contract_type)
             attempts = await execute_attempts(s, eff.id)
             justification = None
+            eligibility = None
             if eff.state == EffectState.RETRYABLE:
-                justification = (eff.reconciliation_result or {}).get("retry_justification") or \
-                    (eff.dispatch_result or {}).get("retry_justification")
-                if not justification:
-                    raise StateConflict("retry without a recorded contract justification is prohibited",
-                                        code="RETRY_NOT_JUSTIFIED")
+                rec = eff.reconciliation_result or {}
+                negative = False
+                if rec.get("negative_authoritative") and rec.get("observation_id"):
+                    try:
+                        observed = await s.get(ObservationRow, UUID(rec["observation_id"]))
+                    except (ValueError, TypeError):
+                        observed = None
+                    negative = bool(attempts and observed and observed.effect_id == eff.id
+                                    and observed.negative_authoritative and observed.authoritative
+                                    and observed.application == str(Application.NOT_APPLIED_CONFIRMED)
+                                    and observed.observed_at >= attempts[-1].started_at)
+                eligibility = retry_eligibility(
+                    contract, attempts, now=c.manager.clock(),
+                    negative_authoritative=negative,
+                    last_observed_attempt_no=rec.get("last_execute_attempt_no"),
+                    provider_key=lop.provider_idempotency_key, payload=eff.payload,
+                    contract_version=eff.contract_version)
+                if not eligibility.allowed:
+                    # The old decision was valid only when reconciliation made it.
+                    # Persist a hold so a queued worker cannot repeatedly retry it.
+                    lop.status = str(LogicalOperationStatus.UNKNOWN)
+                    eff.application = str(Application.UNKNOWN)
+                    c.manager.transition_effect(s, tx, eff, EffectState.UNKNOWN,
+                                                "retry lacks current contract-backed evidence",
+                                                event_type=EventType.EFFECT_DISPATCH_UNKNOWN)
+                    return None
+                justification = f"{eligibility.kind}: {eligibility.reason}"
             attempt_no = await next_attempt_no(s, lop.id, AttemptKind.EXECUTE)
             if attempt_no > contract.max_attempts:
                 c.manager.transition_effect(s, tx, eff, EffectState.FAILED,
@@ -141,7 +165,8 @@ class Executor:
                 work_item_id=claim.item_id if claim else None, worker_epoch=claim.epoch if claim else None,
                 request={"operation_key": eff.operation_key, "idempotency_key": lop.provider_idempotency_key,
                          "effect_type": eff.contract_type, "contract_version": eff.contract_version,
-                         "payload": eff.payload, "retry_justification": justification,
+                         "payload": eff.payload, "retry_eligibility": eligibility.as_dict() if eligibility else None,
+                         "retry_justification": justification,
                          "pact_transaction_id": str(eff.transaction_id), "pact_effect_id": str(eff.id)},
             )
             s.add(attempt)
@@ -156,6 +181,24 @@ class Executor:
             attempt_id = attempt.id
             view = effect_view(eff)
         await c.crash_hook("after_intent", effect_id)
+        if eligibility is not None and eligibility.expires_at is not None \
+                and c.manager.clock() + timedelta(seconds=contract.max_inflight_s) >= eligibility.expires_at:
+            async with c.db.uow() as s:
+                await c.queue.fence(s, claim)
+                rows = await load_tree(s, root_id, lock=True)
+                attempt = await s.get(OperationAttemptRow, attempt_id)
+                if attempt.status == str(AttemptStatus.INTENT_RECORDED):
+                    attempt.status = str(AttemptStatus.NOT_SENT)
+                    attempt.finished_at = c.manager.clock()
+                    attempt.error = {"code": "RETRY_WINDOW_EXPIRED_BEFORE_SEND"}
+                    eff = rows.effects[effect_id]
+                    lop = await s.get(LogicalOperationRow, eff.logical_operation_id)
+                    lop.status = str(LogicalOperationStatus.UNKNOWN)
+                    eff.application = str(Application.UNKNOWN)
+                    c.manager.transition_effect(s, rows.txs[eff.transaction_id], eff, EffectState.UNKNOWN,
+                                                "retry retention expired before external send",
+                                                event_type=EventType.EFFECT_DISPATCH_UNKNOWN)
+            return None
         adapter = c.registry.adapter(view.effect_type)
         with span("effect.dispatch", transaction_id=view.transaction_id, root_id=root_id, effect_id=view.id,
                   operation_key=view.operation_key, actor_id=view.actor_id, effect_type=view.effect_type) as sp:

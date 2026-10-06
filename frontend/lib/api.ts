@@ -85,7 +85,10 @@ export const api = {
   getCommitDecision: (id: string) => request<CommitDecision>(`/api/v1/transactions/${id}/commit-decision`),
   getReceipt: (id: string) => request<Receipt>(`/api/v1/transactions/${id}/receipt`),
   verifyReceipt: (id: string) => request<ReceiptVerify>(`/api/v1/transactions/${id}/receipt/verify`),
-  prepare: (id: string) => post<{ transaction_id: string; state: string }>(`/api/v1/transactions/${id}/prepare`),
+  prepare: (id: string) => post<{ transaction_id: string; state: string; status?: string;
+    digest?: string; issues?: { code: string; detail: string }[] }>(`/api/v1/transactions/${id}/prepare`),
+  revise: (id: string, reason: string) =>
+    post<{ transaction_id: string; state: string }>(`/api/v1/transactions/${id}/revise`, { reason }),
   commit: (id: string, digest: string) =>
     post<{ transaction_id: string; state: string; status: string; decision: CommitDecision }>(
       `/api/v1/transactions/${id}/commit`,
@@ -105,6 +108,8 @@ export const api = {
     body: { action: OperatorActionType; reason: string; residual_id?: string },
   ) => post<{ transaction_id: string; state: string }>(`/api/v1/transactions/${id}/operator-actions`, body),
   proposeIntent: (intent: string) => post<{
+    proposal_trace_id: string;
+    intent_issues: { code: string; detail: string }[];
     provider: string; live: boolean; model: string | null; usage: Record<string, number> | null;
     proposed_plan: {
       objective: string; requested_workflow: string; entity_references: Record<string, string>;
@@ -117,6 +122,12 @@ export const api = {
     required_slots: string[]; issues: { code: string; [key: string]: unknown }[];
     authorized_to_begin: boolean; next_action: string;
   }>("/api/v1/planner/review", { proposal }),
+  acceptIntent: (body: { proposal_trace_id: string; business_request: Record<string, unknown>;
+    clarified_objective: string; clarification_note: string }, requestId: string) =>
+    request<{ transaction_id: string; state: string; next_action: string }>("/api/v1/planner/accept",
+      { method: "POST", headers: { "X-PACT-Request-ID": requestId }, body: JSON.stringify(body) }),
+  assembleDraft: (id: string) => post<{ status: string; trusted_eligible_refund?: string;
+    issues?: { code: string; detail: string }[] }>(`/api/v1/planner/assemble/${id}`),
   listScenarios: () => request<{ scenarios: Scenario[] }>(`/api/v1/demo/scenarios`),
   runScenario: (key: string, body: RunRequest) => post<RunResponse>(`/api/v1/demo/run/${key}`, body),
   externalState: (transactionId: string) =>

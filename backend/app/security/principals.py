@@ -49,6 +49,7 @@ class Principal:
     scopes: frozenset[str]
     grants: dict[str, Any] = field(default_factory=dict)
     via: str = "api_key"  # api_key | session
+    authorization_epoch: int = 1
 
     def has(self, scope: str) -> bool:
         return scope in self.scopes or "admin" in self.scopes
@@ -91,7 +92,8 @@ def verify_password(password: str, stored: str) -> bool:
 
 def _to_principal(row: PrincipalRow, via: str) -> Principal:
     return Principal(id=row.id, tenant_id=row.tenant_id, name=row.name, kind=PrincipalKind(row.kind),
-                     scopes=frozenset(row.scopes or []), grants=dict(row.grants or {}), via=via)
+                     scopes=frozenset(row.scopes or []), grants=dict(row.grants or {}), via=via,
+                     authorization_epoch=row.authorization_epoch)
 
 
 class PrincipalService:
@@ -115,6 +117,8 @@ class PrincipalService:
                                    grants=grants, status="ACTIVE")
                 s.add(row)
             else:
+                if row.kind != str(kind) or row.scopes != sorted(scopes) or row.grants != grants:
+                    row.authorization_epoch += 1
                 row.kind, row.scopes, row.grants = str(kind), sorted(scopes), grants
             await s.flush()
             return _to_principal(row, "admin")
@@ -140,6 +144,7 @@ class PrincipalService:
         async with self.db.uow() as s:
             row = await s.get(PrincipalRow, principal_id)
             row.status, row.revoked_at = "REVOKED", _now()
+            row.authorization_epoch += 1
             await s.execute(update(CredentialRow).where(CredentialRow.principal_id == principal_id,
                                                         CredentialRow.revoked_at.is_(None)).values(revoked_at=_now()))
             await s.execute(update(SessionRow).where(SessionRow.principal_id == principal_id,

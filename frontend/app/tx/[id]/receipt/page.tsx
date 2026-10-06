@@ -92,6 +92,7 @@ export default function ReceiptPage() {
   const p = data.payload;
   const finalState = data.kind === "final" ? data.finalState : data.state;
   const uncompensated = p.uncompensated_effects ?? [];
+  const residuals = p.residual_obligations ?? [];
 
   return (
     <div className="space-y-4">
@@ -118,7 +119,7 @@ export default function ReceiptPage() {
           <span>
             transaction <Mono className="text-ink">{p.transaction_id}</Mono>
           </span>
-          <span>initiator {p.initiator}</span>
+          <span>initiator {typeof p.initiator === "string" ? p.initiator : p.initiator?.name ?? "unknown"}</span>
           <span>created {fmtTime(p.created_at, true)}</span>
           <span>finalized {fmtTime(p.finalized_at, true)}</span>
           <span>{p.event_count} events</span>
@@ -167,6 +168,20 @@ export default function ReceiptPage() {
             </tbody>
           </table>
         </div>
+      )}
+
+      {residuals.length > 0 && (
+        <Card title="Residual obligations" subtitle="Observed effects that still need accountable remediation">
+          <div className="space-y-3 text-xs">
+            {residuals.map((r) => <div key={r.id} className="neu-inset p-3">
+              <div className="font-semibold text-bad">{r.kind} · {r.disposition}</div>
+              <div className="mt-1">{r.description}</div>
+              <div className="mt-1 font-mono text-mute">{r.operation_identity}</div>
+              {r.amount && <div className="mt-1">Observed amount: {money(r.amount)} {r.currency}</div>}
+              {r.required_remediation && <div className="mt-1">Required remediation: {r.required_remediation}</div>}
+            </div>)}
+          </div>
+        </Card>
       )}
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
@@ -225,14 +240,14 @@ export default function ReceiptPage() {
               <tr key={e.effect_id} className="border-b border-line">
                 <td className="py-1.5 pr-4">
                   <Mono className="text-ink">{e.effect_type}</Mono>
-                  <div className="font-mono text-xs text-faint">{e.operation_key}</div>
+                  <div className="font-mono text-xs text-faint">{e.operation_identity ?? e.operation_key}</div>
                 </td>
                 <td className="py-1.5 pr-4 font-mono text-mute">{e.actor_id}</td>
                 <td className="py-1.5 pr-4">
                   <StateBadge state={e.final_state} size="xs" />
                 </td>
                 <td className="py-1.5 pr-4 font-mono">{e.reversibility_class}</td>
-                <td className="py-1.5 pr-4 font-mono">{e.amount ? money(e.amount) : "—"}</td>
+                <td className="py-1.5 pr-4 font-mono">{e.requested_amount ?? e.amount ? money(e.requested_amount ?? e.amount) : "—"}</td>
                 <td className="py-1.5 pr-4 font-mono text-ink-soft">{e.provider_reference ?? "—"}</td>
               </tr>
             ))}
@@ -274,6 +289,25 @@ export default function ReceiptPage() {
         {(p.verification_results ?? []).length === 0 && <div className="text-xs text-faint">none</div>}
       </Card>
 
+      {(p.final_observation_set ?? []).length > 0 && <Card title="Final observations"
+        subtitle="Observed provider state cited by the receipt; projected outcomes alone do not appear here">
+        <table className="w-full text-xs">
+          <thead className="text-left text-faint"><tr className="border-b border-line">
+            <th className="py-1.5 pr-4">operation</th><th className="py-1.5 pr-4">application</th>
+            <th className="py-1.5 pr-4">postcondition</th><th className="py-1.5 pr-4">observed amount</th>
+            <th className="py-1.5 pr-4">source</th><th className="py-1.5 pr-4">provider reference</th>
+          </tr></thead>
+          <tbody>{(p.final_observation_set ?? []).map((o) => <tr key={o.observation_id} className="border-b border-line">
+            <td className="py-1.5 pr-4 font-mono">{o.operation_identity}</td>
+            <td className="py-1.5 pr-4">{o.application}</td>
+            <td className="py-1.5 pr-4">{o.postcondition}</td>
+            <td className="py-1.5 pr-4">{o.observed_amount ? money(o.observed_amount) : "—"}</td>
+            <td className="py-1.5 pr-4">{o.source}</td>
+            <td className="py-1.5 pr-4 font-mono">{o.provider_reference ?? "—"}</td>
+          </tr>)}</tbody>
+        </table>
+      </Card>}
+
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
         <Card title="Reconciliation events">
           <AttemptTable rows={p.reconciliation_events ?? []} showOutcome />
@@ -293,9 +327,9 @@ export default function ReceiptPage() {
             <tbody>
               {(p.external_references ?? []).map((r, i) => (
                 <tr key={i} className="border-b border-line">
-                  <td className="py-1.5 pr-4 font-mono text-mute">{r.system}</td>
+                  <td className="py-1.5 pr-4 font-mono text-mute">{r.provider ?? r.system}</td>
                   <td className="py-1.5 pr-4 font-mono text-ink">{r.reference}</td>
-                  <td className="py-1.5 pr-4 font-mono text-xs text-faint">{r.operation_key}</td>
+                  <td className="py-1.5 pr-4 font-mono text-xs text-faint">{r.operation_identity ?? r.operation_key}</td>
                 </tr>
               ))}
             </tbody>

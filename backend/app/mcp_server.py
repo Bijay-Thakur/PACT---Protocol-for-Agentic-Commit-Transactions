@@ -39,24 +39,33 @@ def create_server(base_url: str, api_key: str) -> MCPServer:
                     "message": type(exc).__name__}
 
     @server.tool()
-    async def pact_list_contracts() -> dict[str, Any]:
+    async def pact_list_contracts(transaction_id: str | None = None) -> dict[str, Any]:
         """List contracts allowed by this agent's server-side workflow grants."""
-        return await call("GET", "/api/v1/contracts")
+        return await call("GET", "/api/v1/contracts" +
+                          (f"?transaction_id={transaction_id}" if transaction_id else ""))
+
+    @server.tool()
+    async def pact_list_workflows(transaction_id: str | None = None) -> dict[str, Any]:
+        """Discover versioned workflows available under current or delegated authority."""
+        return await call("GET", "/api/v1/workflows" +
+                          (f"?transaction_id={transaction_id}" if transaction_id else ""))
 
     @server.tool()
     async def pact_begin(workflow: str, business_request: dict[str, Any],
-                         objective: str | None = None) -> dict[str, Any]:
+                         objective: str | None = None, request_id: str | None = None) -> dict[str, Any]:
         """Create a draft; credentials determine identity and workflow authority."""
         return await call("POST", "/api/v1/transactions",
-                          {"workflow": workflow, "business_request": business_request, "objective": objective})
+                          {"workflow": workflow, "business_request": business_request, "objective": objective},
+                          request_id)
 
     @server.tool()
     async def pact_delegate(parent_id: str, recipient: str, objective: str,
-                            capability: dict[str, Any], required: bool = True) -> dict[str, Any]:
+                            capability: dict[str, Any], required: bool = True,
+                            request_id: str | None = None) -> dict[str, Any]:
         """Delegate only a subset of the verified parent's capability."""
         return await call("POST", f"/api/v1/transactions/{parent_id}/children",
                           {"recipient": recipient, "objective": objective,
-                           "capability": capability, "required": required})
+                           "capability": capability, "required": required}, request_id)
 
     @server.tool()
     async def pact_propose(transaction_id: str, effect_type: str, slot: str,
@@ -71,6 +80,17 @@ def create_server(base_url: str, api_key: str) -> MCPServer:
     async def pact_prepare(transaction_id: str) -> dict[str, Any]:
         """Resolve facts, compile mandatory policy and freeze a reviewable revision."""
         return await call("POST", f"/api/v1/transactions/{transaction_id}/prepare", {})
+
+    @server.tool()
+    async def pact_revise(transaction_id: str, reason: str) -> dict[str, Any]:
+        """Reopen an eligible frozen plan; the previous digest and approvals cease to apply."""
+        return await call("POST", f"/api/v1/transactions/{transaction_id}/revise", {"reason": reason})
+
+    @server.tool()
+    async def pact_withdraw(transaction_id: str, effect_id: str, reason: str) -> dict[str, Any]:
+        """Withdraw an unexecuted draft effect owned by this principal."""
+        return await call("POST", f"/api/v1/transactions/{transaction_id}/effects/{effect_id}/withdraw",
+                          {"reason": reason})
 
     @server.tool()
     async def pact_request_commit(transaction_id: str, revision_digest: str) -> dict[str, Any]:

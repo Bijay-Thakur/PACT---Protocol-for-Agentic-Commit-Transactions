@@ -40,8 +40,10 @@ from app.persistence.models import (
     CapabilityRow,
     ApiRequestRow,
     EffectRow,
+    IntentAcceptanceRow,
     OperatorActionRow,
     PlanRevisionRow,
+    ProposalTraceRow,
     TransactionRow,
 )
 from app.persistence.repositories import append_event, cap_node, get_tx, lock_root
@@ -98,7 +100,26 @@ class TransactionManager:
                                 code="SPECIFICATION_CLOSED", details={"state": tx.state})
 
     # ----------------------------------------------------------------- begin
-    async def begin(self, p: Principal, req: BeginRequest) -> UUID:
+    async def _request_replay(self, s: AsyncSession, p: Principal, request_id: str | None,
+                              route: str, body: dict[str, Any]) -> ApiRequestRow | None:
+        if not request_id:
+            return None
+        if len(request_id) > 128:
+            raise ValidationFailed("request ID too long", code="INVALID_REQUEST_ID")
+        fingerprint = hashlib.sha256(canonical_json({"route": route, "body": body}).encode()).hexdigest()
+        await s.execute(pg_insert(ApiRequestRow).values(
+            tenant_id=p.tenant_id, principal_id=p.id, request_id=request_id,
+            route=route, body_hash=fingerprint).on_conflict_do_nothing(
+            index_elements=["tenant_id", "principal_id", "request_id"]))
+        row = (await s.execute(select(ApiRequestRow).where(
+            ApiRequestRow.tenant_id == p.tenant_id, ApiRequestRow.principal_id == p.id,
+            ApiRequestRow.request_id == request_id).with_for_update())).scalar_one()
+        if row.route != route or row.body_hash != fingerprint:
+            raise StateConflict("request ID was already used for different content", code="REQUEST_ID_CONFLICT")
+        return row
+
+    async def begin(self, p: Principal, req: BeginRequest, request_id: str | None = None,
+                    acceptance: tuple[UUID, str] | None = None) -> UUID:
         p.require("tx:begin")
         reject_forged(p, actor_id=req.actor_id, issuer=req.issuer, tenant_id=req.tenant_id)
         wf = self.workflows.get(req.workflow)
@@ -114,6 +135,20 @@ class TransactionManager:
         cap_spec = wf.root_capability(params, grant, now)
         with span("transaction.create", actor_id=p.name) as sp:
             async with self.db.uow() as s:
+                if acceptance is not None:
+                    trace = await s.get(ProposalTraceRow, acceptance[0])
+                    if trace is None or trace.tenant_id != p.tenant_id or trace.principal_id != p.id \
+                            or trace.outcome != "PROPOSED" or not trace.proposal \
+                            or trace.proposal.get("requested_workflow") != wf.key:
+                        raise Forbidden("proposal is not an accepted request of this principal",
+                                        code="PROPOSAL_NOT_OWNED")
+                replay_body = req.model_dump(mode="json")
+                if acceptance is not None:
+                    replay_body = {**replay_body, "acceptance": {
+                        "proposal_trace_id": str(acceptance[0]), "clarification_note": acceptance[1]}}
+                replay = await self._request_replay(s, p, request_id, "begin", replay_body)
+                if replay is not None and replay.response:
+                    return UUID(replay.response["transaction_id"])
                 tx_id = uuid.uuid4()
                 cap = CapabilityRow(
                     id=uuid.uuid4(), transaction_id=tx_id, parent_capability_id=None, subject_id=p.name,
@@ -140,6 +175,11 @@ class TransactionManager:
                                       status=str(PlanRevisionStatus.DRAFT), workflow=wf.key,
                                       workflow_version=wf.version, policy_version=wf.policy_version,
                                       created_by=p.id))
+                if acceptance is not None:
+                    s.add(IntentAcceptanceRow(tenant_id=p.tenant_id, principal_id=p.id,
+                                              proposal_trace_id=acceptance[0], root_id=tx_id,
+                                              clarified_request=params, clarification_note=acceptance[1]))
+                    trace.root_id = tx_id
                 await s.flush()
                 append_event(s, tx, EventType.TRANSACTION_CREATED, {
                     "objective": objective, "workflow": wf.key, "workflow_version": wf.version,
@@ -149,11 +189,15 @@ class TransactionManager:
                 append_event(s, tx, EventType.CAPABILITY_ISSUED, {
                     "capability_id": str(cap.id), "issuer": cap.issuer, "subject": p.name,
                     "source": "server-side workflow grant", **self._cap_summary(cap)}, actor="pact")
+                if replay is not None:
+                    replay.status_code = 201
+                    replay.response = {"transaction_id": str(tx_id)}
             sp.set_attribute("pact.transaction_id", str(tx_id))
         return tx_id
 
     # -------------------------------------------------------------- delegate
-    async def delegate(self, p: Principal, parent_id: UUID, req: DelegateRequest) -> UUID:
+    async def delegate(self, p: Principal, parent_id: UUID, req: DelegateRequest,
+                       request_id: str | None = None) -> UUID:
         p.require("tx:delegate")
         reject_forged(p, actor_id=req.actor_id, tenant_id=req.tenant_id)
         recipient = await self.principals.by_name(p.tenant_id, req.recipient)
@@ -165,6 +209,10 @@ class TransactionManager:
             parent = await self._tx_for(s, parent_id, p)
             root = await lock_root(s, parent.root_id)
             await s.refresh(parent)
+            replay = await self._request_replay(s, p, request_id, f"delegate:{parent_id}",
+                                                req.model_dump(mode="json"))
+            if replay is not None and replay.response:
+                return UUID(replay.response["transaction_id"])
             if parent.principal_id != p.id:
                 raise Forbidden("only the actor of the parent transaction may delegate from it", code="NOT_TRANSACTION_ACTOR")
             grant = p.workflow_grant(root.workflow or "") or {}
@@ -177,6 +225,9 @@ class TransactionManager:
             except AuthorityViolation as exc:
                 rejection = exc  # raised before any write
             else:
+                if replay is not None:
+                    replay.status_code = 201
+                    replay.response = {"transaction_id": str(child.id)}
                 return child.id
         async with self.db.uow() as s:
             parent = await get_tx(s, parent_id)

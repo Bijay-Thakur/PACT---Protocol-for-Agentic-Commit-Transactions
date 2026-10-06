@@ -1,0 +1,131 @@
+name: Phase 2.1 checks
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  backend-postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: pact
+          POSTGRES_PASSWORD: pact_test_only
+          POSTGRES_DB: pact_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pact -d pact_test"
+          --health-interval 3s --health-timeout 3s --health-retries 20
+    env:
+      PACT_DATABASE_URL: postgresql+asyncpg://pact:pact_test_only@localhost:5432/pact
+      PACT_TEST_DATABASE_URL: postgresql+asyncpg://pact:pact_test_only@localhost:5432/pact_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -c backend/requirements-constraints.txt -e 'backend[dev]'
+      - run: python -m pip check
+      - run: python -m pytest -q backend/tests
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+        working-directory: frontend
+      - run: npm run lint
+        working-directory: frontend
+      - run: npm run build
+        working-directory: frontend
+
+  mcp-node:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: python -m pip install -c backend/requirements-constraints.txt -e backend
+      - run: npm ci
+        working-directory: examples/mcp-node
+      - run: npm run protocol-test
+        working-directory: examples/mcp-node
+      - run: python examples/mcp-python/protocol_test.py
+
+  browser:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: pact
+          POSTGRES_PASSWORD: pact_test_only
+          POSTGRES_DB: pact
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pact -d pact"
+          --health-interval 3s --health-timeout 3s --health-retries 20
+    env:
+      PACT_DATABASE_URL: postgresql+asyncpg://pact:pact_test_only@localhost:5432/pact
+      NEXT_PUBLIC_PACT_API_URL: http://127.0.0.1:18000
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: python -m pip install -c backend/requirements-constraints.txt -e 'backend[dev]'
+      - run: python scripts/run_disposable_tests.py backend/tests/test_int_phase21_fences.py
+      - run: python scripts/provision_browser_fixture.py
+      - run: npm ci
+        working-directory: frontend
+      - run: npx playwright install --with-deps chromium
+        working-directory: frontend
+      - run: |
+          python scripts/run_disposable_app.py > backend-browser.log 2>&1 &
+          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:18000/readyz && break; sleep 1; done
+          curl -fsS http://127.0.0.1:18000/readyz
+          npm --prefix frontend run dev -- -p 13000 -H 127.0.0.1 > frontend-browser.log 2>&1 &
+          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:13000/ && break; sleep 1; done
+          curl -fsS http://127.0.0.1:13000/
+          npm --prefix frontend run test:browser
+      - if: failure()
+        run: |
+          cat backend-browser.log || true
+          cat frontend-browser.log || true
+
+  reference-boundary:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python scripts/create_reference_target.py
+      - run: docker compose -f deploy/reference/compose.yml config --quiet
+        env:
+          PACT_REFERENCE_DB_PASSWORD: pact_reference_ci_only
+      - run: docker compose -f deploy/reference/compose.yml --profile probe up --build --abort-on-container-exit --exit-code-from agent
+        env:
+          PACT_REFERENCE_DB_PASSWORD: pact_reference_ci_only
+      - if: always()
+        run: docker compose -f deploy/reference/compose.yml --profile probe down -v
+        env:
+          PACT_REFERENCE_DB_PASSWORD: pact_reference_ci_only

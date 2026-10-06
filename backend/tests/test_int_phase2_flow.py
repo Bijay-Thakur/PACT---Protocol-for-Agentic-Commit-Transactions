@@ -101,12 +101,18 @@ async def test_applied_wrong_refund_retains_residual(rt):
     assert frozen["status"] == "FROZEN", frozen
     queued = await rt.coordinator.request_commit(p, root, CommitRequest(revision_digest=frozen["digest"]))
     assert queued["status"] == "QUEUED", queued
-    worker = Worker(rt)
-    for _ in range(80):
-        if not await worker.run_once():
-            break
     from sqlalchemy import select
     from app.persistence.models import EffectRow, ResidualObligationRow, TransactionRow
+    worker = Worker(rt)
+    for _ in range(100):
+        await worker.run_once(root)
+        async with rt.db.read() as s:
+            observed = await s.get(TransactionRow, root)
+            if observed.state == "HUMAN_REQUIRED":
+                break
+        await asyncio.sleep(0.02)
+    else:
+        raise AssertionError("wrong applied refund did not reach a human hold")
     async with rt.db.read() as s:
         tx = await s.get(TransactionRow, root)
         refund = (await s.execute(select(EffectRow).where(

@@ -29,7 +29,7 @@ export function TxHeader({
     setResult(null);
     try {
       const r = await fn();
-      setResult({ ok: true, text: `${label}: ${r.state || r.status || "recorded"}` });
+      setResult({ ok: true, text: `${label}: ${r.status || r.state || "recorded"}` });
     } catch (e) {
       const err = e as ApiError;
       setResult({ ok: false, text: `${label} failed: ${err.code ?? ""} ${err.message}` });
@@ -88,6 +88,15 @@ export function TxHeader({
       </div>
 
       {/* State-dependent actions */}
+      {tx.state === "SPECIFYING" && detail.effects.length > 0 && (
+        <div className="neu-inset mt-5 flex items-center gap-4 p-4">
+          <button className={`${btn} neu-btn-primary`} disabled={!!busy}
+            onClick={() => act("Prepare revision", () => api.prepare(tx.id))}>
+            Prepare revision
+          </button>
+          <span className="text-xs text-mute">Review the new digest and consequences before approval.</span>
+        </div>
+      )}
       {tx.state === "PREPARED" && (
         <div className="neu-inset mt-5 flex items-center gap-4 p-4">
           {detail.plan_revision?.approval_required && detail.plan_revision.digest && <>
@@ -99,9 +108,17 @@ export function TxHeader({
             </button>
           </>}
           <span className="text-xs text-mute">
-            Digest {detail.plan_revision?.digest?.slice(0, 16) ?? "unavailable"}. The initiating agent requests
-            commit with the complete digest after review.
+            Digest {detail.plan_revision?.digest?.slice(0, 16) ?? "unavailable"}. Approval and commit are separate actions.
           </span>
+          {detail.plan_revision?.digest && <button className={`${btn} neu-btn-primary`}
+            disabled={!!busy} onClick={() => act("Request exact commit",
+              () => api.commit(tx.id, detail.plan_revision!.digest!))}>
+            Request exact commit
+          </button>}
+          <button className={btn} disabled={!!busy || note.length < 3}
+            onClick={() => act("Revise frozen plan", () => api.revise(tx.id, note))}>
+            Revise frozen plan
+          </button>
         </div>
       )}
       {tx.state === "UNKNOWN" && (

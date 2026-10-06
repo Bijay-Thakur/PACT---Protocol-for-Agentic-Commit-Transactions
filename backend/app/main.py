@@ -10,6 +10,7 @@ from fastapi import FastAPI, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from sqlalchemy import text
 
 from app.api import auth, demo, effects, events, planner, receipts, transactions
 from app.config import Settings
@@ -61,6 +62,21 @@ def create_app(settings: Settings | None = None, runtime: Runtime | None = None)
     @app.get("/healthz")
     async def health() -> dict:
         return {"status": "ok"}
+
+    @app.get("/readyz")
+    async def ready(request: Request) -> JSONResponse:
+        try:
+            rt = request.app.state.runtime
+            async with rt.db.read() as session:
+                await session.execute(text("SELECT 1"))
+                version = (await session.execute(text("SELECT version_num FROM alembic_version"))).scalar_one()
+            if version != "0003":
+                return JSONResponse({"status": "not_ready", "reason": "migration_outdated"}, status_code=503)
+            return JSONResponse({"status": "ready", "migration": version,
+                                 "model_profile": rt.planner.name,
+                                 "model_live_checked": False})
+        except Exception:
+            return JSONResponse({"status": "not_ready", "reason": "database_unavailable"}, status_code=503)
 
     for r in (auth.router, transactions.router, events.router, receipts.router, effects.router,
               planner.router, demo.router):

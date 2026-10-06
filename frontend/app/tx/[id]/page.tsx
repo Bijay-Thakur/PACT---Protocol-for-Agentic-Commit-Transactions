@@ -4,7 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useTransactionLive } from "@/lib/useTransactionLive";
-import { Card, ErrorBox, Tabs } from "@/components/ui";
+import { Card, ErrorBox, JsonView, Tabs } from "@/components/ui";
 import { TxHeader } from "@/components/tx/TxHeader";
 import { CommitBarrierPanel } from "@/components/tx/CommitBarrierPanel";
 import { HierarchyPanel } from "@/components/tx/HierarchyPanel";
@@ -51,6 +51,12 @@ function TransactionView({ id }: { id: string }) {
       </Link>
       {error && <ErrorBox title="Refresh failed (showing last known state)" message={`${error.code}: ${error.message}`} />}
       <TxHeader detail={detail} mode={mode} lastUpdate={lastUpdate} onChanged={refetch} />
+
+      {detail.plan_revision?.digest && <Card title="Frozen consequence review"
+        subtitle={`Projection/v1 and required outcomes are bound to digest ${detail.plan_revision.digest.slice(0, 16)}. Expected changes are projections until provider observations arrive.`}>
+        <JsonView value={{ projection: detail.plan_revision.projection,
+          required_outcomes: detail.plan_revision.required_outcomes }} maxHeight={340} />
+      </Card>}
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]">
         <CommitBarrierPanel detail={detail} />

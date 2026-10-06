@@ -303,7 +303,8 @@ export interface TransactionDetail {
   root_id: string;
   policy: Policy;
   plan_revision?: { number: number; status: string; digest: string | null;
-    approval_required: boolean; approval?: { role?: string; reason?: string } } | null;
+    approval_required: boolean; approval?: { role?: string; reason?: string };
+    projection?: Record<string, unknown>; required_outcomes?: Record<string, unknown>[] } | null;
   metadata: TxMetadata;
   tree: TreeNode[];
   capabilities: Capability[];
@@ -365,7 +366,7 @@ export interface ReceiptPayload {
   root_id?: string;
   parent_id?: string | null;
   objective?: string;
-  initiator?: string;
+  initiator?: string | { name: string; principal_id: string | null; kind: string | null };
   participants?: string[];
   created_at?: string;
   finalized_at?: string | null;
@@ -377,11 +378,13 @@ export interface ReceiptPayload {
     effect_id: string;
     effect_type: string;
     actor_id: string;
-    operation_key: string;
+    operation_key?: string;
+    operation_identity?: string;
     final_state: string;
     reversibility_class: string;
     provider_reference: string | null;
     amount: string | null;
+    requested_amount?: string | null;
     transaction_id?: string;
     depends_on?: string[];
     payload?: JsonObject;
@@ -417,8 +420,20 @@ export interface ReceiptPayload {
     reversibility_class: string;
     reason: string;
   }[];
+  final_observation_set?: {
+    observation_id: string; operation_identity: string; purpose: string;
+    source: string; application: string; postcondition: string;
+    observed_amount: string | null; provider_reference: string | null;
+    evidence_digest: string; at: string;
+  }[];
+  residual_obligations?: {
+    id: string; operation_identity: string; kind: string; description: string;
+    amount: string | null; currency: string | null; blocking: boolean;
+    disposition: string; required_remediation: string | null;
+  }[];
   human_actions?: JsonObject[];
-  external_references?: { system: string; reference: string; operation_key: string }[];
+  external_references?: { system?: string; provider?: string; reference: string;
+    operation_key?: string; operation_identity?: string }[];
   event_count?: number;
   receipt_hash?: string;
 }

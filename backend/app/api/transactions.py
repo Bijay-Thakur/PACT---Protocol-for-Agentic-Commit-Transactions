@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 from uuid import UUID
+from sqlalchemy import select
 
 from fastapi import APIRouter, Depends, Header, Query
 
@@ -16,14 +17,17 @@ from app.domain.transaction import (
 from app.runtime import Runtime
 from app.security.principals import Principal
 from app.services.query_service import QueryService
+from app.persistence.models import PlanRevisionRow, TransactionRow
+from app.domain.errors import StateConflict
 
 router = APIRouter(prefix="/api/v1/transactions", tags=["transactions"])
 
 
 @router.post("", status_code=201)
 async def create_transaction(body: BeginRequest, p: Principal = Depends(principal),
+                             request_id: str | None = Header(default=None, alias="X-PACT-Request-ID"),
                              rt: Runtime = Depends(runtime)) -> dict[str, Any]:
-    tx_id = await rt.manager.begin(p, body)
+    tx_id = await rt.manager.begin(p, body, request_id=request_id)
     return {"transaction_id": str(tx_id), "state": "CREATED", "revision": 1}
 
 
@@ -40,10 +44,31 @@ async def get_transaction(tx_id: UUID, p: Principal = Depends(principal),
     return await q.detail(p, tx_id)
 
 
+@router.get("/{tx_id}/projection")
+async def projection(tx_id: UUID, p: Principal = Depends(principal),
+                     rt: Runtime = Depends(runtime)) -> dict[str, Any]:
+    async with rt.db.read() as s:
+        tx = await s.get(TransactionRow, tx_id)
+        if tx is None or tx.tenant_id != p.tenant_id:
+            raise StateConflict("transaction unavailable", code="TRANSACTION_NOT_FOUND")
+        await rt.manager.assert_can_read(s, p, tx.root_id)
+        root = await s.get(TransactionRow, tx.root_id)
+        rev = (await s.execute(select(PlanRevisionRow).where(
+            PlanRevisionRow.root_id == root.id,
+            PlanRevisionRow.revision_no == root.current_revision))).scalar_one_or_none()
+        if rev is None or not rev.digest:
+            return {"status": "NOT_FROZEN", "transaction_id": str(root.id)}
+        return {"status": "FROZEN", "transaction_id": str(root.id), "digest": rev.digest,
+                "projection": (rev.compiled or {}).get("projection"),
+                "required_outcomes": (rev.compiled or {}).get("outcomes", []),
+                "approval": (rev.compiled or {}).get("approval", {})}
+
+
 @router.post("/{tx_id}/children", status_code=201)
 async def create_child(tx_id: UUID, body: DelegateRequest, p: Principal = Depends(principal),
+                       request_id: str | None = Header(default=None, alias="X-PACT-Request-ID"),
                        rt: Runtime = Depends(runtime)) -> dict[str, Any]:
-    child_id = await rt.manager.delegate(p, tx_id, body)
+    child_id = await rt.manager.delegate(p, tx_id, body, request_id=request_id)
     return {"transaction_id": str(child_id), "root_id": str(tx_id), "state": "CREATED"}
 
 

@@ -83,7 +83,8 @@ class Reconciler:
                   effect_type=view.effect_type, actor_id=view.actor_id):
             obs, _ = await self.verifier.poll(view)
         ambiguous, sent_at = last_dispatch(attempts)
-        obs, negative_auth = normalize_negative(contract, obs, ambiguous=ambiguous, sent_at=sent_at)
+        obs, negative_auth = normalize_negative(contract, obs, ambiguous=ambiguous, sent_at=sent_at,
+                                                now=c.manager.clock())
         justification = None
         retry_after = None
         if contract.reconciliation_policy == ReconciliationPolicy.MANUAL:
@@ -93,7 +94,8 @@ class Reconciler:
         elif obs.application == Application.APPLIED:
             outcome = "APPLIED_MISMATCH"
         elif obs.application == Application.NOT_APPLIED_CONFIRMED or (obs.absent and obs.readable):
-            justification = retry_justification(contract, attempts, negative_authoritative=negative_auth)
+            justification = retry_justification(contract, attempts, negative_authoritative=negative_auth,
+                                                now=c.manager.clock())
             if justification:
                 outcome = ReconciliationOutcome.SAFE_TO_RETRY
             else:
@@ -126,7 +128,8 @@ class Reconciler:
             record = {"outcome": str(outcome), "observation_id": str(row.id), "application": str(obs.application),
                       "postcondition": str(obs.postcondition), "reason": obs.reason, "evidence": obs.evidence,
                       "negative_authoritative": negative_auth, "retry_justification": justification,
-                      "attempt_no": attempt_no}
+                      "attempt_no": attempt_no,
+                      "last_execute_attempt_no": max((a.attempt_no for a in attempts), default=None)}
             eff.reconciliation_result = record
             await c.evidence.apply_outcome(s, tx, eff, obs, row)
             info = {"reconciliation": record}

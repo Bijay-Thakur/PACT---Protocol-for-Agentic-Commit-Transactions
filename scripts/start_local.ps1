@@ -26,7 +26,24 @@ if ($env:PACT_PLANNER_PROVIDER -eq 'groq' -and -not ($env:PACT_PLANNER_API_KEY -
 New-Item -ItemType Directory -Path $local -Force | Out-Null
 $pidFile = Join-Path $local 'servers.json'
 if (Test-Path -LiteralPath $pidFile) {
-    throw "A local server record already exists at $pidFile. Run .\scripts\stop_local.ps1 first."
+    $recorded = Get-Content -LiteralPath $pidFile -Raw | ConvertFrom-Json
+    $matching = @('backend', 'frontend') | Where-Object {
+        $record = $recorded.$_
+        $process = if ($record) { Get-Process -Id $record.pid -ErrorAction SilentlyContinue } else { $null }
+        $process -and $process.StartTime.ToUniversalTime().ToString('o') -eq $record.started
+    }
+    if ($matching.Count -eq 2) {
+        try {
+            $api = Invoke-RestMethod -Uri 'http://127.0.0.1:8000/healthz' -TimeoutSec 2
+            $page = Invoke-WebRequest -Uri 'http://127.0.0.1:3000/' -TimeoutSec 2 -UseBasicParsing
+            if ($api.status -eq 'ok' -and $page.StatusCode -eq 200) {
+                Write-Host 'PACT is already running: http://localhost:3000 (console), http://localhost:8000/docs (API).'
+                return
+            }
+        } catch { }
+    }
+    Write-Host 'Recovering stale or partial PACT server record...'
+    & (Join-Path $PSScriptRoot 'stop_local.ps1')
 }
 
 function Assert-Port-Free([int]$port) {

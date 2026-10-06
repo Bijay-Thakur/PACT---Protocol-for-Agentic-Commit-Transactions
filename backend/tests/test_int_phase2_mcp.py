@@ -35,6 +35,8 @@ async def test_stdio_mcp_calls_authenticated_rest_from_separate_process(rt):
         tenant, "other_mcp_agent", PrincipalKind.AGENT, ["tx:begin"],
         {"workflows": {"customer_remediation": {"remediation_budget": "10.00"}}})
     other_key = await rt.principals.issue_api_key(other.id)
+    (await rt.http.post("/sim/seed", json={"customer_id": "C-MCP"})).raise_for_status()
+    charge = (await rt.http.get("/sim/state/C-MCP")).json()["billing"]["account"]["charges"][0]["id"]
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
@@ -68,6 +70,19 @@ async def test_stdio_mcp_calls_authenticated_rest_from_separate_process(rt):
                 assert status.structured_content["result"]["transaction"]["state"] == "CREATED"
                 repeated = await session.call_tool("pact_status", {"transaction_id": rid})
                 assert repeated.structured_content["result"]["transaction"]["id"] == rid
+                proposed = await session.call_tool("pact_propose", {"transaction_id": rid,
+                    "effect_type": "billing.refund", "slot": "refund_line", "request_id": uuid.uuid4().hex,
+                    "payload": {"customer_id": "C-MCP", "charge_id": charge, "amount": "25.00"}})
+                assert proposed.structured_content["ok"] is True, proposed
+                eid = proposed.structured_content["result"]["effect_id"]
+                frozen = await session.call_tool("pact_prepare", {"transaction_id": rid})
+                assert frozen.structured_content["result"]["status"] == "FROZEN", frozen
+                revised = await session.call_tool("pact_revise", {"transaction_id": rid,
+                    "reason": "Correct reviewed draft"})
+                assert revised.structured_content["result"]["state"] == "SPECIFYING"
+                withdrawn = await session.call_tool("pact_withdraw", {"transaction_id": rid,
+                    "effect_id": eid, "reason": "Replace draft effect"})
+                assert withdrawn.structured_content["result"]["state"] == "ABORTED"
                 malformed = await session.call_tool("pact_begin", {"workflow": "customer_remediation"})
                 assert malformed.is_error
         node_dir = Path(__file__).resolve().parents[2] / "examples" / "mcp-node"

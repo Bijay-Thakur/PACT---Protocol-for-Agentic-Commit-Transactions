@@ -19,6 +19,7 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import UTC, datetime
+from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
@@ -62,10 +63,10 @@ async def execute_attempts(s: AsyncSession, effect_id: UUID, kind: AttemptKind =
 
 def last_dispatch(attempts: list[OperationAttemptRow]) -> tuple[bool, datetime | None]:
     """(was the last authoritative dispatch ambiguous?, when was it sent)."""
-    auth = [a for a in attempts if a.authoritative]
-    if not auth:
+    possibly_sent = [a for a in attempts if a.status != "NOT_SENT"]
+    if not possibly_sent:
         return False, None
-    last = auth[-1]
+    last = max(possibly_sent, key=lambda a: (a.started_at, a.attempt_no))
     return last.status in AMBIGUOUS_ATTEMPT_STATUSES, last.started_at
 
 
@@ -92,20 +93,67 @@ def normalize_negative(contract: EffectContract, obs: Observation, *, ambiguous:
                                   "reason": obs.reason + " (negative evidence not yet authoritative)"}), False
 
 
+@dataclass(frozen=True)
+class RetryEligibility:
+    kind: str
+    allowed: bool
+    reason: str
+    first_intent_at: datetime | None = None
+    expires_at: datetime | None = None
+
+    def as_dict(self) -> dict[str, Any]:
+        return {"kind": self.kind, "allowed": self.allowed, "reason": self.reason,
+                "first_intent_at": self.first_intent_at.isoformat() if self.first_intent_at else None,
+                "expires_at": self.expires_at.isoformat() if self.expires_at else None}
+
+
+def retry_eligibility(contract: EffectContract, attempts: list[OperationAttemptRow], *,
+                      negative_authoritative: bool, now: datetime | None = None,
+                      last_observed_attempt_no: int | None = None,
+                      provider_key: str | None = None, payload: dict[str, Any] | None = None,
+                      contract_version: str | None = None) -> RetryEligibility:
+    now = now or _now()
+    # Intent can have escaped even after a worker was fenced. Never restart the
+    # provider's retention clock at a later authoritative attempt.
+    relevant = sorted(attempts, key=lambda a: (a.started_at, getattr(a, "attempt_no", 0)))
+    first = relevant[0] if relevant else None
+    if not first:
+        return RetryEligibility("DENY", False, "no prior dispatch intent")
+    if any((provider_key is not None and a.request.get("idempotency_key") != provider_key)
+           or (payload is not None and a.request.get("payload") != payload)
+           or (contract_version is not None and a.request.get("contract_version") != contract_version)
+           for a in relevant):
+        return RetryEligibility("DENY", False, "attempt identity, payload or contract changed")
+    latest = max(getattr(a, "attempt_no", 0) for a in relevant)
+    if negative_authoritative and last_observed_attempt_no == latest:
+        return RetryEligibility("AUTHORITATIVE_NEGATIVE_EVIDENCE", True,
+                                "authoritative absence after the latest dispatch")
+    if getattr(relevant[-1], "status", None) == "NOT_SENT":
+        return RetryEligibility("TRANSPORT_NOT_SENT", True, "last transport proved no send")
+    if getattr(relevant[-1], "status", None) == "REJECTED_RETRYABLE":
+        status = (relevant[-1].response or {}).get("http_status")
+        if status in contract.safe_retry_statuses:
+            return RetryEligibility("TARGET_STATE_IDEMPOTENT", True,
+                                    contract.safe_retry_statuses[status])
+    if contract.idempotency_window_s:
+        from datetime import timedelta
+        expiry = first.started_at + timedelta(seconds=contract.idempotency_window_s)
+        # Reserve the entire declared in-flight interval for network delay.
+        if now + timedelta(seconds=contract.max_inflight_s) < expiry:
+            key = first.request.get("idempotency_key")
+            if key and all(a.request.get("idempotency_key") == key for a in relevant):
+                return RetryEligibility("PROVIDER_DEDUP", True, "same provider key within retention window",
+                                        first.started_at, expiry)
+    return RetryEligibility("RECONCILE", False, "retry requires current authoritative evidence")
+
+
 def retry_justification(contract: EffectContract, attempts: list[OperationAttemptRow], *,
                         negative_authoritative: bool, now: datetime | None = None) -> str | None:
-    now = now or _now()
-    if negative_authoritative:
-        return ("AUTHORITATIVE_NEGATIVE_EVIDENCE: provider read after the in-flight window shows the operation "
-                "was not applied")
-    first = next((a for a in attempts if a.authoritative), None)
-    if contract.idempotency_window_s and first is not None:
-        age = (now - first.started_at).total_seconds()
-        if age < contract.idempotency_window_s:
-            return (f"PROVIDER_IDEMPOTENCY_DEDUP: replay with the same key {first.request.get('idempotency_key')} "
-                    f"{age:.1f}s after the first attempt, inside the declared {contract.idempotency_window_s:.0f}s "
-                    "dedup window; the provider cannot apply it twice")
-    return None
+    """Compatibility display helper; never use its text as dispatch authority."""
+    decision = retry_eligibility(contract, attempts, negative_authoritative=negative_authoritative,
+                                 now=now, last_observed_attempt_no=max((getattr(a, "attempt_no", 0) for a in attempts), default=None)
+                                 if negative_authoritative else None)
+    return f"{decision.kind}: {decision.reason}" if decision.allowed else None
 
 
 class EvidenceLedger:
