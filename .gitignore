@@ -7,6 +7,7 @@ __pycache__/
 .env
 node_modules/
 frontend/.next/
+frontend/.next-browser/
 frontend/out/
 frontend/test-results/
 frontend/playwright-report/
@@ -15,4 +16,3 @@ docker-compose.override.yml
 PACT_Concrete_System_Build_Plan.md
 PACT_Master_Build_Prompt.md
 PACT_Phase_2_Build_Plan_and_Master_Prompt.md
-

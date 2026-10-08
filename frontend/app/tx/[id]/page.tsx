@@ -14,6 +14,7 @@ import { AuthorityPanel } from "@/components/tx/AuthorityPanel";
 import { InvariantsPanel } from "@/components/tx/InvariantsPanel";
 import { ExternalRealityPanel } from "@/components/tx/ExternalRealityPanel";
 import { EventTimeline } from "@/components/tx/EventTimeline";
+import { LiveKernel } from "@/components/site/Kernel";
 
 type TabKey = "events" | "external" | "invariants" | "authority";
 
@@ -32,7 +33,7 @@ function TransactionView({ id }: { id: string }) {
   if (error && !detail) {
     return (
       <div className="space-y-3">
-        <Link href="/" className="text-xs text-mute hover:text-ink">
+        <Link href="/transactions" className="text-xs text-mute hover:text-ink">
           ← all transactions
         </Link>
         <ErrorBox title={`Cannot load transaction ${id}`} message={`${error.code}: ${error.message}`} />
@@ -46,11 +47,12 @@ function TransactionView({ id }: { id: string }) {
 
   return (
     <div className="space-y-4">
-      <Link href="/" className="text-xs text-mute hover:text-ink">
+      <Link href="/transactions" className="text-xs text-mute hover:text-ink">
         ← all transactions
       </Link>
       {error && <ErrorBox title="Refresh failed (showing last known state)" message={`${error.code}: ${error.message}`} />}
       <TxHeader detail={detail} mode={mode} lastUpdate={lastUpdate} onChanged={refetch} />
+      <LiveKernel id={id} state={detail.transaction.state} events={events} />
 
       {(detail.plan_revision?.semantic_assessment || detail.plan_revision?.issues?.length) && (
         <Card title="Semantic review"
