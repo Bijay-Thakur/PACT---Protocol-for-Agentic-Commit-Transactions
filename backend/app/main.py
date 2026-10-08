@@ -70,7 +70,7 @@ def create_app(settings: Settings | None = None, runtime: Runtime | None = None)
             async with rt.db.read() as session:
                 await session.execute(text("SELECT 1"))
                 version = (await session.execute(text("SELECT version_num FROM alembic_version"))).scalar_one()
-            if version != "0003":
+            if version != "0004":
                 return JSONResponse({"status": "not_ready", "reason": "migration_outdated"}, status_code=503)
             return JSONResponse({"status": "ready", "migration": version,
                                  "model_profile": rt.planner.name,

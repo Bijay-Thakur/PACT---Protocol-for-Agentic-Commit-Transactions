@@ -1,0 +1,77 @@
+{
+  "schema_version": "pact-next-phase-results/1",
+  "baseline_sha": "7142a93c0a37790beb89cca42b10e6d7bec81375",
+  "evidence_date": "2026-10-07",
+  "completion_label": "still incomplete",
+  "not_labels": ["reference SDK-ready service", "externally validated product", "production ready"],
+  "checks": {
+    "unit_and_integration_disposable_postgres": {"status": "PASS", "passed": 205, "failed": 0, "skipped": 0, "database": "pact_phase21_test"},
+    "migration_0002_to_0004": {
+      "status": "PASS",
+      "receipts_preserved": 123,
+      "observations_preserved": 270,
+      "residual_obligations_preserved": 47,
+      "unknown_rows_preserved": 1,
+      "inflight_rows_preserved": 1
+    },
+    "frontend_lint": {"status": "PASS"},
+    "frontend_build": {"status": "PASS", "routes": 10},
+    "browser_journeys": {
+      "status": "PASS",
+      "passed": 6,
+      "channel": "msedge",
+      "customer": "C-RUN-223413",
+      "journeys": ["receipt", "revision_and_denied_approval", "mismatch_residual", "contradictory_clarification", "unknown_reconcile", "keyboard_1280_and_390"]
+    },
+    "python_mcp": {"status": "PASS", "sessions": 2, "http_calls": 6},
+    "node_mcp": {"status": "PASS", "sessions": 2, "http_calls": 6},
+    "compose_runtime_isolation": {
+      "status": "PASS",
+      "docker_engine": "29.8.2",
+      "host_port": "127.0.0.1:18080",
+      "healthy_target_commit_count_before": 1,
+      "direct_filesystem_write_denied": true,
+      "direct_provider_and_database_denied": true,
+      "agent_no_target_or_daemon_mount": true,
+      "agent_no_executor_secrets": true,
+      "mediated_state": "COMMITTED_VERIFIED",
+      "independent_commit_count_after": 2,
+      "independent_content": "reviewed through isolated PACT"
+    },
+    "semantic_ablation_local": {
+      "status": "PASS",
+      "oracle": "generator_labels_not_human",
+      "human_qualified": false,
+      "cases": 400,
+      "holds": {"deterministic_reduced": 178, "proposer_echo": 114, "proposer_plus_judge": 114},
+      "always_hold": false,
+      "repetition_stable": true,
+      "provider_calls": 0,
+      "tokens": 0,
+      "concurrent_control_overhead": "NOT_RUN"
+    },
+    "semantic_corpus_human_labels": {
+      "status": "BLOCKED",
+      "cases": 400,
+      "human_labels_pending": 400,
+      "sha256": "021fc828decfebc49df19b0d55942c7666611ec9466911517eee625cc73281aa"
+    },
+    "live_groq": {"status": "NOT_RUN"},
+    "live_nemotron": {"status": "BLOCKED", "reason": "No authorized credentialed run"},
+    "hosted_ci": {"status": "NOT_RUN"}
+  },
+  "gates": {
+    "G01": "PASS", "G02": "PASS", "G03": "PASS",
+    "G04": "PASS", "G05": "PASS", "G06": "PASS",
+    "G07": "PASS", "G08": "PASS", "G09": "PASS",
+    "G10": "PASS", "G11": "PASS", "G12": "PASS",
+    "G13": "PASS", "G14": "PASS", "G15": "PASS",
+    "G16": "PASS", "G17": "PASS", "G18": "PASS",
+    "G19": "BLOCKED", "G20": "BLOCKED", "G21": "PASS",
+    "G22": "NOT_RUN", "G23": "BLOCKED", "G24": "PASS",
+    "G25": "PASS", "G26": "PASS", "G27": "PASS",
+    "G28": "PASS", "G29": "PASS", "G30": "PASS",
+    "G31": "PASS", "G32": "PASS", "G33": "NOT_RUN",
+    "G34": "PASS", "G35": "PASS", "G36": "PASS"
+  }
+}

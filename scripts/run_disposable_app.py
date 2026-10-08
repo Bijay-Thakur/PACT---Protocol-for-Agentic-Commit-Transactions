@@ -27,8 +27,8 @@ async def check(url: str) -> None:
     try:
         await check_and_mark(conn, url)
         version = await conn.fetchval("SELECT version_num FROM alembic_version")
-        if version != "0003":
-            raise RuntimeError("test database migration is not at 0003")
+        if version != "0004":
+            raise RuntimeError("test database migration is not at 0004")
     finally:
         await conn.close()
 
@@ -40,7 +40,7 @@ def configure() -> str:
     os.environ["PACT_SIM_DATABASE_URL"] = target
     os.environ["PACT_MODEL_PROFILE"] = "deterministic_fixture"
     os.environ.pop("PACT_PLANNER_PROVIDER", None)
-    os.environ["PACT_DEMO_MODE"] = "false"
+    os.environ["PACT_DEMO_MODE"] = "true"
     os.environ["PACT_EMBEDDED_WORKER"] = "true"
     os.environ["PACT_CORS_ORIGINS"] = "http://localhost:13000,http://127.0.0.1:13000"
     return target

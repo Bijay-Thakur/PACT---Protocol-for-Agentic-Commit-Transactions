@@ -1,7 +1,7 @@
 # PACT — Protocol for Agentic Commit Transactions
 
-> **Phase 2 is in progress.** The scenarios below describe the original simulated workflow.
-> Current setup, evidence, and remaining gates are in the
+> **Phase 2.1 is implemented with local evidence; the next semantic-control phase is in progress.**
+> The scenarios below describe the original simulated workflow. Current setup, evidence, and remaining gates are in the
 > [Phase 2 runbook](docs/phase2/runbook.md),
 > [implementation checklist](docs/phase2/implementation-checklist.md), and
 > [current state report](docs/phase2/current-state-report.md).
@@ -61,6 +61,10 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\start_local.ps
 
 `-SetupOperator` prompts for a private password. Then open `http://localhost:3000` and sign in with tenant `local`, username `operator`. The API docs are at `http://localhost:8000/docs`. Later starts can omit `-SetupOperator`; stop the servers with `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\stop_local.ps1`. The launcher loads `.env`, migrates the database, enables local demos, and checks both servers. It writes ignored logs under `.local/`. The existing `.env` in this checkout selects Groq and reads its key from `GROQ_API_KEY`.
 
+After setup, `npm run dev` from the repository root starts both servers through
+that launcher; `npm run stop` stops them. `npm run dev` from `frontend/` starts
+only Next.js and requires the backend to be running separately.
+
 Docker Compose is packaged but has not been verified on this host because the Docker daemon is unavailable. See the [runbook](docs/phase2/runbook.md) for manual, MCP, and worker setup.
 
 ### Demos
@@ -106,4 +110,4 @@ scripts/                demo scripts
 
 ## Known limitations
 
-See the [Phase 2.1 acceptance matrix](docs/phase2_1/implementation-checklist.md#acceptance-matrix) and preserved [Phase 2 matrix](docs/phase2/implementation-checklist.md#acceptance-matrix). Agents and operators are authenticated, and durable workers handle recovery. The verified business providers are simulated, receipts are hashed but not signed, and live Nebius/NVIDIA inference, actual Code Council integration, enforcement isolation, and a browser walkthrough remain open.
+See the [next-phase release report](docs/next-phase/release-report.md), the [Phase 2.1 acceptance matrix](docs/phase2_1/implementation-checklist.md#acceptance-matrix), and the preserved [Phase 2 matrix](docs/phase2/implementation-checklist.md#acceptance-matrix). Agents and operators are authenticated, and durable workers handle recovery. Six local Edge journeys passed, including UNKNOWN reconciliation. A local Docker reference run denied the agent a direct write and completed one approved Git promotion. Business providers in that evidence are still simulated, receipts are hashed but not signed, and live Nebius/NVIDIA inference, human semantic qualification, hosted CI, and actual Code Council integration remain open.

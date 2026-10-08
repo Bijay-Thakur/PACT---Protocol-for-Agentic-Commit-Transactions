@@ -13,6 +13,7 @@ from pathlib import Path
 
 from app.adapters.registry import EffectRegistry, default_registry
 from app.agents.model_provider import DeterministicExplainer, build_planner
+from app.agents.semantic_judge import build_judge
 from app.config import Settings
 from app.core.authority_engine import AuthorityEngine
 from app.core.commit_barrier import CommitBarrier
@@ -26,6 +27,7 @@ from app.core.transaction_manager import TransactionManager
 from app.core.work_queue import WorkQueue
 from app.persistence.db import Database
 from app.policy.workflows import CodeSandboxChange, default_workflows
+from app.policy.assemblers import AssemblyRegistry, OffboardingAssembler
 from app.security.principals import PrincipalService
 from app.simulators.app import create_sim_app
 from app.simulators.store import SimStore
@@ -49,6 +51,7 @@ class Runtime:
             self.http = httpx.AsyncClient(base_url=settings.sim_base_url)
         self.registry = registry or default_registry()
         self.workflows = default_workflows()
+        self.assemblers = AssemblyRegistry([OffboardingAssembler()])
         if settings.code_sandbox_repo:
             if not settings.code_sandbox_repo_id or not settings.code_sandbox_allowed_paths:
                 raise ValueError("Git sandbox requires repo ID and explicit allowed paths")
@@ -70,8 +73,10 @@ class Runtime:
         self.receipts = ReceiptGenerator(self.registry)
         self.exec_ctx = ExecutionContext(self.db, self.manager, self.registry, self.http,
                                          settings.adapter_timeout_s, self.queue, self.evidence, crash_hook)
+        self.judge = build_judge(settings)
         self.coordinator = Coordinator(self.exec_ctx, self.manager, self.barrier, self.invariants,
-                                       self.receipts, self.workflows, self.reservations, self.budgets, settings)
+                                       self.receipts, self.workflows, self.reservations, self.budgets, settings,
+                                       judge=self.judge)
         self.planner = build_planner(settings, self.workflows)
         self.explainer = DeterministicExplainer()
 

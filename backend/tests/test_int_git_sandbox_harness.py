@@ -27,6 +27,17 @@ from app.persistence.models import TransactionRow
 from .conftest import requires_db
 
 
+@pytest.fixture
+async def git_rt(rt):
+    """Each adapter variant gets its own trusted registration table."""
+    runtime = Runtime(rt.settings)
+    await runtime.start()
+    try:
+        yield runtime
+    finally:
+        await runtime.stop()
+
+
 def git(*args: str, cwd: Path) -> str:
     result = subprocess.run(["git", *args], cwd=cwd, text=True,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
@@ -130,7 +141,7 @@ async def test_optional_runtime_configuration_registers_only_allowlisted_sandbox
 
 @requires_db
 @pytest.mark.parametrize("lost_response", [False, True])
-async def test_pact_compiles_approves_and_promotes_disposable_git_candidate(rt, sandbox, lost_response):
+async def test_pact_compiles_approves_and_promotes_disposable_git_candidate(git_rt, sandbox, lost_response):
     class LostResponseAdapter(GitSandboxAdapter):
         async def execute(self, effect, ctx):
             result = await super().execute(effect, ctx)
@@ -139,6 +150,7 @@ async def test_pact_compiles_approves_and_promotes_disposable_git_candidate(rt, 
                                       error="simulated response loss after Git update-ref")
             return result
     adapter_class = LostResponseAdapter if lost_response else GitSandboxAdapter
+    rt = git_rt
     rt.registry.register(adapter_class(sandbox, "council_fixture"))
     rt.workflows.register(CodeSandboxChange())
     tenant = f"test-{uuid.uuid4().hex[:8]}"
@@ -170,11 +182,9 @@ async def test_pact_compiles_approves_and_promotes_disposable_git_candidate(rt, 
     assert queued["status"] == "QUEUED", queued
     # Rebuild the runtime from its database and trusted sandbox configuration.
     # The work item was enqueued by rt; this fresh instance claims and finishes it.
-    resumed = Runtime(replace(rt.settings, code_sandbox_repo=str(sandbox.repo),
-        code_sandbox_repo_id="council_fixture",
-        code_sandbox_allowed_paths=["approved.txt", "docs/note.txt"]))
-    if lost_response:
-        resumed.registry.register(LostResponseAdapter(sandbox, "council_fixture"))
+    resumed = Runtime(rt.settings)
+    resumed.registry.register(adapter_class(sandbox, "council_fixture"))
+    resumed.workflows.register(CodeSandboxChange())
     await resumed.start()
     try:
         worker = Worker(resumed)

@@ -23,6 +23,15 @@ if ($env:PACT_PLANNER_PROVIDER -eq 'groq' -and -not ($env:PACT_PLANNER_API_KEY -
     throw 'Groq planner selected, but neither PACT_PLANNER_API_KEY nor GROQ_API_KEY is set.'
 }
 
+function Set-UpOperator {
+    Push-Location (Join-Path $root 'backend')
+    try {
+        Write-Host 'Create or refresh the local operator account. Choose a private password when prompted.'
+        & $python -m app.cli create-operator local operator
+        if ($LASTEXITCODE -ne 0) { throw 'Operator setup failed.' }
+    } finally { Pop-Location }
+}
+
 New-Item -ItemType Directory -Path $local -Force | Out-Null
 $pidFile = Join-Path $local 'servers.json'
 if (Test-Path -LiteralPath $pidFile) {
@@ -37,6 +46,7 @@ if (Test-Path -LiteralPath $pidFile) {
             $api = Invoke-RestMethod -Uri 'http://127.0.0.1:8000/healthz' -TimeoutSec 2
             $page = Invoke-WebRequest -Uri 'http://127.0.0.1:3000/' -TimeoutSec 2 -UseBasicParsing
             if ($api.status -eq 'ok' -and $page.StatusCode -eq 200) {
+                if ($SetupOperator) { Set-UpOperator }
                 Write-Host 'PACT is already running: http://localhost:3000 (console), http://localhost:8000/docs (API).'
                 return
             }
@@ -63,11 +73,7 @@ try {
     Write-Host 'Applying PACT database migrations...'
     & $python -m app.cli migrate
     if ($LASTEXITCODE -ne 0) { throw 'Migration failed. Check PACT_DATABASE_URL and PostgreSQL.' }
-    if ($SetupOperator) {
-        Write-Host 'Create or refresh the local operator account. Choose a private password when prompted.'
-        & $python -m app.cli create-operator local operator
-        if ($LASTEXITCODE -ne 0) { throw 'Operator setup failed.' }
-    }
+    if ($SetupOperator) { Set-UpOperator }
 } finally { Pop-Location }
 
 $backend = $null

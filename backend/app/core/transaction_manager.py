@@ -119,7 +119,7 @@ class TransactionManager:
         return row
 
     async def begin(self, p: Principal, req: BeginRequest, request_id: str | None = None,
-                    acceptance: tuple[UUID, str] | None = None) -> UUID:
+                    acceptance: tuple[UUID, str, str, dict[str, Any], list[str]] | None = None) -> UUID:
         p.require("tx:begin")
         reject_forged(p, actor_id=req.actor_id, issuer=req.issuer, tenant_id=req.tenant_id)
         wf = self.workflows.get(req.workflow)
@@ -145,7 +145,9 @@ class TransactionManager:
                 replay_body = req.model_dump(mode="json")
                 if acceptance is not None:
                     replay_body = {**replay_body, "acceptance": {
-                        "proposal_trace_id": str(acceptance[0]), "clarification_note": acceptance[1]}}
+                        "proposal_trace_id": str(acceptance[0]), "clarification_note": acceptance[1],
+                        "accepted_objective": acceptance[2], "intent_semantics": acceptance[3],
+                        "resolved_issue_codes": acceptance[4]}}
                 replay = await self._request_replay(s, p, request_id, "begin", replay_body)
                 if replay is not None and replay.response:
                     return UUID(replay.response["transaction_id"])
@@ -178,7 +180,10 @@ class TransactionManager:
                 if acceptance is not None:
                     s.add(IntentAcceptanceRow(tenant_id=p.tenant_id, principal_id=p.id,
                                               proposal_trace_id=acceptance[0], root_id=tx_id,
-                                              clarified_request=params, clarification_note=acceptance[1]))
+                                              clarified_request=params, clarification_note=acceptance[1],
+                                              accepted_objective=acceptance[2],
+                                              intent_semantics=acceptance[3],
+                                              resolved_issue_codes=acceptance[4]))
                     trace.root_id = tx_id
                 await s.flush()
                 append_event(s, tx, EventType.TRANSACTION_CREATED, {

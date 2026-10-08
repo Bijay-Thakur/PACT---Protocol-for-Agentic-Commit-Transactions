@@ -1,4 +1,4 @@
-"""Copy the guarded disposable test DB and verify 0002 -> 0003 preservation.
+"""Copy the guarded disposable test DB and verify 0002 -> current-head preservation.
 
 Never opens or migrates the working PACT database. The probe database is a
 private copy of pact_phase21_test and is removed only if this process created it.
@@ -79,7 +79,7 @@ async def main() -> None:
         after = await snapshot(probe)
         if before != after:
             raise AssertionError("populated migration changed protected counts or evidence")
-        print({"status": "PASS", "migration": "0002 -> 0003", "rows": {
+        print({"status": "PASS", "migration": "0002 -> 0004", "rows": {
             name: before[name] for name in ("receipts", "observations", "effects", "operation_attempts",
                                            "residual_obligations", "unknown", "inflight")}})
     finally:

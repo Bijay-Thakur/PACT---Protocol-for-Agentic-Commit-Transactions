@@ -26,11 +26,12 @@ async def main() -> None:
             {"workflows": {"customer_offboarding": {"amount_limit": "500.00",
                                                       "approval_threshold": "100.00"}}})
         approver = await rt.principals.upsert_principal(tenant, "approver", PrincipalKind.OPERATOR,
-            ["op:approve", "tx:read_all"], {"roles": ["refund_approver"]})
+            ["op:approve", "op:recover", "demo:run", "tx:read_all"], {"roles": ["refund_approver"]})
         await rt.principals.set_password(requester.id, requester.name, password)
         await rt.principals.set_password(approver.id, approver.name, password)
         customer_id = os.environ.get("PACT_BROWSER_CUSTOMER_ID", "C-BROWSER-21")
-        for cid in (customer_id, f"{customer_id}-REVISE", f"{customer_id}-MISMATCH"):
+        for cid in (customer_id, f"{customer_id}-REVISE", f"{customer_id}-MISMATCH",
+                    f"{customer_id}-CONTRADICT"):
             (await rt.http.post("/sim/seed", json={"customer_id": cid})).raise_for_status()
         mismatch_id = f"{customer_id}-MISMATCH"
         (await rt.http.post("/sim/faults", json={"customer_id": mismatch_id, "system": "billing",

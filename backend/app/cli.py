@@ -107,7 +107,9 @@ async def _model_command(command: str, args: list[str]) -> int:
             try:
                 traced = await propose(ProposeRequest(intent=case["intent"]), eval_principal, eval_rt)
                 proposal = traced["proposed_plan"]
-                reviewed = await review(ReviewRequest(proposal=PlanProposal.model_validate(proposal)),
+                reviewed = await review(ReviewRequest(
+                                            proposal_trace_id=UUID(traced["proposal_trace_id"]),
+                                            proposal=PlanProposal.model_validate(proposal)),
                                         eval_principal, eval_rt)
                 result = {"case_id": case.get("id"), "status": "PROPOSAL",
                           "split": case.get("split"), "category": case.get("category"),
@@ -123,10 +125,12 @@ async def _model_command(command: str, args: list[str]) -> int:
                           "latency_ms": getattr(planner, "last_latency_ms", None),
                           "critical_entity_agreement": False}
             result["expected"] = case.get("expected")
-            result["expected_match"] = None if case.get("expected") is None else (
+            result["legacy_label_match"] = None if case.get("expected") is None else (
                 result["status"] == "PROPOSAL" and result["critical_entity_agreement"]
                 if case.get("expected") == "PROPOSAL" else
-                result["status"] != "PROPOSAL" or result.get("review_status") == "NEEDS_CLARIFICATION"
+                result["status"] == "PLANNER_CANNOT_INTERPRET"
+                or (result["status"] == "PROPOSAL"
+                    and result.get("review_status") == "NEEDS_CLARIFICATION")
             )
             results.append(result)
             usage = getattr(planner, "last_usage", None)
@@ -141,12 +145,13 @@ async def _model_command(command: str, args: list[str]) -> int:
               "valid": sum(r["status"] == "PROPOSAL" for r in results),
               "critical_entity_agreement": sum(r["critical_entity_agreement"] for r in results),
               "observed_tokens": observed_tokens, "unknown_usage": unknown_usage,
-              "unsafe_executions": 0, "applied": False, "results": results}
+              "pipeline_unsafe_effects": "NOT_MEASURED_BY_PROPOSAL_EVAL",
+              "applied": False, "results": results}
     heldout = [r for r in results if r.get("split") == "heldout"]
     measured_latency = sorted(float(r["latency_ms"]) for r in results
                               if isinstance(r.get("latency_ms"), (int, float)))
     valid_subset = [r for r in results if r.get("category") == "valid"]
-    report["expected_match"] = sum(bool(r["expected_match"]) for r in results)
+    report["legacy_label_match"] = sum(bool(r["legacy_label_match"]) for r in results)
     report["valid_reviewable_correct"] = sum(r["status"] == "PROPOSAL" and
         r["critical_entity_agreement"] and r.get("review_status") == "REVIEWABLE_REQUEST"
         for r in valid_subset)
@@ -162,7 +167,7 @@ async def _model_command(command: str, args: list[str]) -> int:
                             if measured_latency else None}
     report["required_outcome_coverage"] = "NOT_MEASURED_BY_PROPOSAL_EVAL"
     report["heldout"] = {"cases": len(heldout),
-                         "expected_match": sum(bool(r["expected_match"]) for r in heldout),
+                         "legacy_label_match": sum(bool(r["legacy_label_match"]) for r in heldout),
                          "critical_entity_agreement": sum(bool(r["critical_entity_agreement"])
                                                           for r in heldout if r["expected"] == "PROPOSAL"),
                          "expected_proposals": sum(r["expected"] == "PROPOSAL" for r in heldout)}
@@ -170,8 +175,7 @@ async def _model_command(command: str, args: list[str]) -> int:
     report["acceptance"] = {"valid_reviewable_rate": round(valid_rate, 4),
                             "target": 0.9, "passed": (
                                 len(results) >= 50 and len(heldout) >= 10 and valid_rate >= 0.9
-                                and report["unexpected_reviewable"] == 0
-                                and report["unsafe_executions"] == 0) if command == "model-eval" else
+                                and report["unexpected_reviewable"] == 0) if command == "model-eval" else
                             all(r["status"] == "PROPOSAL" and r["critical_entity_agreement"]
                                 and r.get("review_status") == "REVIEWABLE_REQUEST" for r in results)}
     if command == "model-eval" and parsed.report:

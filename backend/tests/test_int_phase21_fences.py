@@ -14,7 +14,9 @@ from app.domain.enums import PrincipalKind
 from app.domain.transaction import ApprovalRequest, BeginRequest, CommitRequest, DelegateRequest
 from app.domain.errors import StateConflict
 from app.core.executor import AuthorityLost
-from app.persistence.models import TransactionRow, EffectRow, LogicalOperationRow, OperationAttemptRow
+from app.persistence.models import (
+    CapabilityRow, TransactionRow, EffectRow, LogicalOperationRow, OperationAttemptRow,
+)
 
 from .conftest import requires_db
 
@@ -277,3 +279,83 @@ async def test_revocation_linearizes_at_durable_dispatch_intent(rt, monkeypatch,
     async with rt.db.read() as session:
         effect = await session.get(EffectRow, effect_id)
         assert effect.state == ("PREPARED" if revocation_point == "before_intent" else "DISPATCHED")
+
+
+async def test_narrowed_initiator_amount_grant_blocks_pending_forward_dispatch(rt):
+    requester, approver, root, effect_id, cid, _ = await _refund_draft(rt, "narrow")
+    frozen = await rt.coordinator.prepare(requester, root)
+    await rt.coordinator.approve(approver, root, ApprovalRequest(
+        revision_digest=frozen["digest"], reason="Reviewed before grant narrowing"))
+    assert (await rt.coordinator.request_commit(
+        requester, root, CommitRequest(revision_digest=frozen["digest"])
+    ))["status"] == "QUEUED"
+    await rt.principals.upsert_principal(
+        requester.tenant_id,
+        requester.name,
+        PrincipalKind.AGENT,
+        ["tx:begin", "tx:propose", "tx:prepare", "tx:commit"],
+        {"workflows": {"customer_remediation": {"remediation_budget": "10.00"}}},
+    )
+    with pytest.raises(AuthorityLost):
+        await rt.coordinator.executor.dispatch(root, effect_id, None)
+    calls = (await rt.http.get(
+        "/sim/calls", params={"customer_id": cid, "operation": "create_refund"}
+    )).json()
+    assert calls == []
+
+
+async def _queue_refund(rt, suffix: str):
+    requester, approver, root, effect_id, cid, charge = await _refund_draft(rt, suffix)
+    frozen = await rt.coordinator.prepare(requester, root)
+    assert frozen["status"] == "FROZEN", frozen
+    await rt.coordinator.approve(approver, root, ApprovalRequest(
+        revision_digest=frozen["digest"], reason="Reviewed before capability change"))
+    assert (await rt.coordinator.request_commit(
+        requester, root, CommitRequest(revision_digest=frozen["digest"])))["status"] == "QUEUED"
+    return root, effect_id, cid
+
+
+async def test_unchanged_capability_rewrite_still_dispatches_once(rt):
+    root, effect_id, cid = await _queue_refund(rt, "noop-cap")
+    async with rt.db.uow() as session:
+        tx = await session.get(TransactionRow, root)
+        cap = await session.get(CapabilityRow, tx.capability_id)
+        cap.scope = dict(cap.scope)
+    outcome = await rt.coordinator.executor.dispatch(root, effect_id, None)
+    assert outcome is not None and outcome.value == "ACCEPTED"
+    calls = (await rt.http.get("/sim/calls", params={"customer_id": cid, "operation": "create_refund"})).json()
+    assert len(calls) == 1
+
+
+async def test_narrowed_capability_resource_blocks_pending_forward_dispatch(rt):
+    root, effect_id, cid = await _queue_refund(rt, "scope")
+    async with rt.db.uow() as session:
+        tx = await session.get(TransactionRow, root)
+        cap = await session.get(CapabilityRow, tx.capability_id)
+        cap.scope = {**cap.scope, "allowed_resources": ["billing/customer:OTHER/*"]}
+    with pytest.raises(AuthorityLost):
+        await rt.coordinator.executor.dispatch(root, effect_id, None)
+    calls = (await rt.http.get("/sim/calls", params={"customer_id": cid, "operation": "create_refund"})).json()
+    assert calls == []
+
+
+async def test_capability_narrowed_after_durable_intent_cannot_unsend(rt):
+    root, effect_id, cid = await _queue_refund(rt, "inflight-cap")
+    original = rt.exec_ctx.crash_hook
+
+    async def narrow(point, _effect_id):
+        if point != "after_intent":
+            return
+        async with rt.db.uow() as session:
+            tx = await session.get(TransactionRow, root)
+            cap = await session.get(CapabilityRow, tx.capability_id)
+            cap.scope = {**cap.scope, "allowed_resources": ["billing/customer:OTHER/*"]}
+
+    rt.exec_ctx.crash_hook = narrow
+    try:
+        outcome = await rt.coordinator.executor.dispatch(root, effect_id, None)
+    finally:
+        rt.exec_ctx.crash_hook = original
+    assert outcome is not None and outcome.value == "ACCEPTED"
+    calls = (await rt.http.get("/sim/calls", params={"customer_id": cid, "operation": "create_refund"})).json()
+    assert len(calls) == 1

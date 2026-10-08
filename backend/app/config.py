@@ -68,6 +68,10 @@ class Settings:
     model_max_reserved_tokens_per_hour: int = field(default_factory=lambda: int(
         _env("PACT_MODEL_MAX_RESERVED_TOKENS_PER_HOUR", "200000")))
     model_max_inflight: int = field(default_factory=lambda: int(_env("PACT_MODEL_MAX_INFLIGHT", "2")))
+    judge_profile: str = field(default_factory=lambda: _env("PACT_JUDGE_PROFILE", "deterministic"))
+    judge_timeout_s: float = field(default_factory=lambda: float(_env("PACT_JUDGE_TIMEOUT_S", "15")))
+    judge_max_calls_per_candidate: int = field(
+        default_factory=lambda: int(_env("PACT_JUDGE_MAX_CALLS_PER_CANDIDATE", "2")))
     planner_base_url: str = field(default_factory=lambda: _env("PACT_PLANNER_BASE_URL", ""))
     planner_model: str = field(default_factory=lambda: _env("PACT_PLANNER_MODEL", ""))
     planner_api_key: str = field(default_factory=lambda: _env("PACT_PLANNER_API_KEY", ""))

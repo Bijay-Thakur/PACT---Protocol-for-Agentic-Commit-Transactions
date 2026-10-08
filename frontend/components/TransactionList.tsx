@@ -10,15 +10,19 @@ import { Card, ErrorBox, StateBadge } from "./ui";
 export function TransactionList() {
   const [rows, setRows] = useState<TransactionSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [stateFilter, setStateFilter] = useState("");
+  const [search, setSearch] = useState("");
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
     const load = () =>
       api
-        .listTransactions(100)
+        .listTransactions(100, { state: stateFilter || undefined, search: search || undefined })
         .then((r) => {
           if (!alive) return;
           setRows(r.transactions);
+          setNextCursor(r.next_cursor);
           setError(null);
         })
         .catch((e: ApiError) => alive && setError(e.message));
@@ -28,10 +32,38 @@ export function TransactionList() {
       alive = false;
       clearInterval(t);
     };
-  }, []);
+  }, [stateFilter, search]);
+
+  function loadMore() {
+    if (!nextCursor) return;
+    api.listTransactions(100, {
+      state: stateFilter || undefined,
+      search: search || undefined,
+      cursor: nextCursor,
+    }).then((result) => {
+      setRows((current) => [...(current || []), ...result.transactions]);
+      setNextCursor(result.next_cursor);
+    }).catch((reason: ApiError) => setError(reason.message));
+  }
 
   return (
     <Card title="Root transactions" subtitle="Auto-refreshes every 3s" right={rows && <span className="text-xs text-faint">{rows.length} shown</span>}>
+      <div className="mb-4 grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(12rem,0.35fr)]">
+        <label className="text-xs text-mute">Search objective or business identity
+          <input className="neu-field mt-1 w-full px-3 py-2 text-sm" value={search}
+            onChange={(event) => setSearch(event.target.value)} placeholder="Customer, operation, or request" />
+        </label>
+        <label className="text-xs text-mute">State
+          <select className="neu-field mt-1 w-full px-3 py-2 text-sm" value={stateFilter}
+            onChange={(event) => setStateFilter(event.target.value)}>
+            <option value="">All states</option>
+            {["CREATED", "SPECIFYING", "PREPARING", "PREPARED", "COMMITTING", "VERIFYING",
+              "UNKNOWN", "HUMAN_REQUIRED", "COMMITTED_VERIFIED", "COMPENSATED", "ABORTED"].map(
+              (state) => <option key={state} value={state}>{state}</option>,
+            )}
+          </select>
+        </label>
+      </div>
       {error && <ErrorBox title="Cannot load transactions" message={error} />}
       {!rows && !error && <div className="text-sm text-faint">Loading…</div>}
       {rows && rows.length === 0 && <div className="text-sm text-faint">No transactions yet — run a scenario above.</div>}
@@ -77,6 +109,9 @@ export function TransactionList() {
           </table>
         </div>
       )}
+      {nextCursor && <button type="button" className="neu-btn mt-4 px-4 py-2 text-xs" onClick={loadMore}>
+        Load older transactions
+      </button>}
     </Card>
   );
 }

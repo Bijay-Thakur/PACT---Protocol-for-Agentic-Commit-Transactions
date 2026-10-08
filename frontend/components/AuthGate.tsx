@@ -6,6 +6,8 @@ import { api, ApiError } from "@/lib/api";
 export function AuthGate({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<"checking" | "signed_out" | "signed_in">("checking");
   const [name, setName] = useState("");
+  const [activeTenant, setActiveTenant] = useState("");
+  const [roles, setRoles] = useState<string[]>([]);
   const [tenant, setTenant] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -13,7 +15,9 @@ export function AuthGate({ children }: { children: ReactNode }) {
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    api.me().then((p) => { setName(p.name); setStatus("signed_in"); })
+    api.me().then((p) => {
+      setName(p.name); setActiveTenant(p.tenant_id); setRoles(p.roles); setStatus("signed_in");
+    })
       .catch(() => setStatus("signed_out"));
   }, []);
 
@@ -24,6 +28,9 @@ export function AuthGate({ children }: { children: ReactNode }) {
     try {
       const result = await api.login({ tenant_id: tenant, username, password });
       setName(result.principal.name);
+      setActiveTenant(result.principal.tenant_id);
+      const current = await api.me();
+      setRoles(current.roles);
       setPassword("");
       setStatus("signed_in");
     } catch (e) {
@@ -55,7 +62,10 @@ export function AuthGate({ children }: { children: ReactNode }) {
     </form>
   );
   return <>
-    <div className="mb-4 flex justify-end text-xs text-mute">
+    <div className="mb-4 flex flex-wrap justify-end gap-x-3 text-xs text-mute">
+      <span>Environment: {process.env.NEXT_PUBLIC_PACT_ENVIRONMENT || "local"}</span>
+      <span>Tenant: {activeTenant}</span>
+      <span>Role: {roles.length ? roles.join(", ") : "requester"}</span>
       <span>Signed in as {name}</span>
       <button className="ml-3 underline" onClick={() => api.logout().finally(() => setStatus("signed_out"))}>
         Sign out

@@ -52,6 +52,18 @@ function TransactionView({ id }: { id: string }) {
       {error && <ErrorBox title="Refresh failed (showing last known state)" message={`${error.code}: ${error.message}`} />}
       <TxHeader detail={detail} mode={mode} lastUpdate={lastUpdate} onChanged={refetch} />
 
+      {(detail.plan_revision?.semantic_assessment || detail.plan_revision?.issues?.length) && (
+        <Card title="Semantic review"
+          subtitle="Advisory meaning checks cannot approve, execute, or override trusted policy. Concerns require attributable clarification.">
+          <JsonView value={{
+            disposition: detail.plan_revision.semantic_disposition,
+            candidate_digest: detail.plan_revision.candidate_digest,
+            assessment: detail.plan_revision.semantic_assessment,
+            issues: detail.plan_revision.issues,
+          }} maxHeight={340} />
+        </Card>
+      )}
+
       {detail.plan_revision?.digest && <Card title="Frozen consequence review"
         subtitle={`Projection/v1 and required outcomes are bound to digest ${detail.plan_revision.digest.slice(0, 16)}. Expected changes are projections until provider observations arrive.`}>
         <JsonView value={{ projection: detail.plan_revision.projection,

@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 
 from app.core.effect_graph import EffectGraph
 from app.core.state_machine import TERMINAL_TX_STATES
@@ -13,6 +14,7 @@ from app.domain.enums import TransactionState
 from app.domain.errors import NotFound, ReceiptNotFinal
 from app.domain.receipt import receipt_digest
 from app.persistence.models import (
+    ApprovalRow,
     CommitDecisionRow,
     EffectRow,
     InvariantEvaluationRow,
@@ -20,8 +22,10 @@ from app.persistence.models import (
     OperatorActionRow,
     PlanRevisionRow,
     ReceiptRow,
+    ResidualObligationRow,
     TransactionEventRow,
     TransactionRow,
+    WorkItemRow,
 )
 from app.persistence.repositories import get_tx, iso, load_tree
 from app.runtime import Runtime
@@ -37,14 +41,53 @@ class QueryService:
         self.rt = rt
         self.db = rt.db
 
-    async def list_transactions(self, p: Principal, limit: int = 50) -> list[dict[str, Any]]:
+    async def list_transactions(
+        self,
+        p: Principal,
+        limit: int = 50,
+        *,
+        state: str | None = None,
+        workflow: str | None = None,
+        actor: str | None = None,
+        search: str | None = None,
+        created_after: datetime | None = None,
+        created_before: datetime | None = None,
+        before_created_at: datetime | None = None,
+        before_id: UUID | None = None,
+    ) -> list[dict[str, Any]]:
         async with self.db.read() as s:
             visible_roots = select(TransactionRow.root_id).where(TransactionRow.principal_id == p.id)
             stmt = select(TransactionRow).where(TransactionRow.parent_id.is_(None),
                                                 TransactionRow.tenant_id == p.tenant_id)
             if not p.has("tx:read_all"):
                 stmt = stmt.where(TransactionRow.id.in_(visible_roots))
-            roots = list((await s.execute(stmt.order_by(TransactionRow.created_at.desc()).limit(limit))).scalars())
+            if state:
+                stmt = stmt.where(TransactionRow.state == state)
+            if workflow:
+                stmt = stmt.where(TransactionRow.workflow == workflow)
+            if actor:
+                stmt = stmt.where(TransactionRow.actor_id == actor)
+            if search:
+                escaped = search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+                stmt = stmt.where(or_(
+                    TransactionRow.objective.ilike(f"%{escaped}%", escape="\\"),
+                    TransactionRow.business_request_key.ilike(f"%{escaped}%", escape="\\"),
+                ))
+            if created_after is not None:
+                stmt = stmt.where(TransactionRow.created_at >= created_after)
+            if created_before is not None:
+                stmt = stmt.where(TransactionRow.created_at < created_before)
+            if before_created_at is not None and before_id is not None:
+                stmt = stmt.where(or_(
+                    TransactionRow.created_at < before_created_at,
+                    and_(
+                        TransactionRow.created_at == before_created_at,
+                        TransactionRow.id < before_id,
+                    ),
+                ))
+            roots = list((await s.execute(
+                stmt.order_by(TransactionRow.created_at.desc(), TransactionRow.id.desc()).limit(limit)
+            )).scalars())
             if not roots:
                 return []
             ids = [r.id for r in roots]
@@ -74,6 +117,130 @@ class QueryService:
                 "scenario": (r.meta or {}).get("scenario"), "customer_id": (r.meta or {}).get("customer_id"),
                 "created_at": iso(r.created_at), "updated_at": iso(r.updated_at), "finalized_at": iso(r.finalized_at),
             } for r in roots]
+
+    async def operations_overview(self, p: Principal) -> dict[str, Any]:
+        """Tenant-wide counts; never approximated from a recent-row list."""
+        async with self.db.read() as s:
+            visible = [TransactionRow.tenant_id == p.tenant_id, TransactionRow.parent_id.is_(None)]
+            if not p.has("tx:read_all"):
+                visible.append(TransactionRow.principal_id == p.id)
+            grouped = dict((await s.execute(
+                select(TransactionRow.state, func.count()).where(*visible)
+                .group_by(TransactionRow.state)
+            )).all())
+            root_ids = select(TransactionRow.id).where(*visible)
+            incidents = (await s.execute(
+                select(func.count()).select_from(TransactionRow).where(
+                    TransactionRow.id.in_(root_ids),
+                    TransactionRow.state.in_(["UNKNOWN", "HUMAN_REQUIRED"]),
+                )
+            )).scalar_one()
+            residuals = (await s.execute(
+                select(func.count()).select_from(ResidualObligationRow).where(
+                    ResidualObligationRow.tenant_id == p.tenant_id,
+                    ResidualObligationRow.disposition == "OPEN",
+                    ResidualObligationRow.root_id.in_(root_ids),
+                )
+            )).scalar_one()
+            backlog = (await s.execute(
+                select(func.count()).select_from(WorkItemRow).where(
+                    WorkItemRow.tenant_id == p.tenant_id,
+                    WorkItemRow.status.in_(["READY", "CLAIMED", "FAILED"]),
+                    WorkItemRow.root_id.in_(root_ids),
+                )
+            )).scalar_one()
+            pending_approvals = (await s.execute(
+                select(func.count()).select_from(PlanRevisionRow)
+                .join(TransactionRow, TransactionRow.id == PlanRevisionRow.root_id)
+                .where(
+                    *visible,
+                    PlanRevisionRow.revision_no == TransactionRow.current_revision,
+                    PlanRevisionRow.status == "FROZEN",
+                    PlanRevisionRow.approval_required.is_(True),
+                    ~select(ApprovalRow.id).where(
+                        ApprovalRow.revision_id == PlanRevisionRow.id,
+                        ApprovalRow.digest == PlanRevisionRow.digest,
+                        ApprovalRow.revoked_at.is_(None),
+                    ).exists(),
+                )
+            )).scalar_one()
+        terminal = {str(state) for state in TERMINAL_TX_STATES}
+        return {
+            "tenant_id": p.tenant_id,
+            "principal": p.name,
+            "roles": p.roles,
+            "state_counts": grouped,
+            "active": sum(count for state, count in grouped.items() if state not in terminal),
+            "incidents": incidents,
+            "open_residuals": residuals,
+            "pending_approvals": pending_approvals,
+            "worker_backlog": backlog,
+            "measured_at": iso(datetime.now(UTC)),
+        }
+
+    async def approval_queue(self, p: Principal, limit: int = 100) -> list[dict[str, Any]]:
+        p.require("op:approve")
+        async with self.db.read() as s:
+            rows = (await s.execute(
+                select(TransactionRow, PlanRevisionRow)
+                .join(PlanRevisionRow, PlanRevisionRow.root_id == TransactionRow.id)
+                .where(
+                    TransactionRow.tenant_id == p.tenant_id,
+                    TransactionRow.parent_id.is_(None),
+                    TransactionRow.state == "PREPARED",
+                    PlanRevisionRow.revision_no == TransactionRow.current_revision,
+                    PlanRevisionRow.status == "FROZEN",
+                    PlanRevisionRow.approval_required.is_(True),
+                )
+                .order_by(TransactionRow.updated_at.asc(), TransactionRow.id.asc())
+                .limit(limit)
+            )).all()
+        return [{
+            "transaction_id": str(root.id),
+            "objective": root.objective,
+            "digest": revision.digest,
+            "revision": revision.revision_no,
+            "approval": (revision.compiled or {}).get("approval"),
+            "projection": (revision.compiled or {}).get("projection"),
+            "semantic_assessment": (revision.compiled or {}).get("semantic_assessment"),
+            "updated_at": iso(root.updated_at),
+        } for root, revision in rows
+            if ((revision.compiled or {}).get("approval") or {}).get("role") in p.roles]
+
+    async def incident_queue(self, p: Principal, limit: int = 100) -> list[dict[str, Any]]:
+        p.require("tx:read_all")
+        async with self.db.read() as s:
+            roots = list((await s.execute(
+                select(TransactionRow).where(
+                    TransactionRow.tenant_id == p.tenant_id,
+                    TransactionRow.parent_id.is_(None),
+                    TransactionRow.state.in_(["UNKNOWN", "HUMAN_REQUIRED"]),
+                ).order_by(TransactionRow.updated_at.asc(), TransactionRow.id.asc()).limit(limit)
+            )).scalars())
+            ids = [root.id for root in roots]
+            residuals = list((await s.execute(
+                select(ResidualObligationRow).where(
+                    ResidualObligationRow.root_id.in_(ids),
+                    ResidualObligationRow.disposition == "OPEN",
+                )
+            )).scalars()) if ids else []
+        by_root: dict[UUID, list[dict[str, Any]]] = {}
+        for item in residuals:
+            by_root.setdefault(item.root_id, []).append({
+                "id": str(item.id), "kind": item.kind, "description": item.description,
+                "required_remediation": item.required_remediation,
+            })
+        return [{
+            "transaction_id": str(root.id),
+            "objective": root.objective,
+            "state": root.state,
+            "updated_at": iso(root.updated_at),
+            "residuals": by_root.get(root.id, []),
+            "permitted_actions": (
+                ["RECONCILE", "FINALIZE_FAILED"] if root.state == "UNKNOWN"
+                else ["RECONCILE", "RETRY_RESTORATION", "ATTEST_RESIDUAL", "FINALIZE_FAILED"]
+            ),
+        } for root in roots]
 
     async def detail(self, p: Principal, tx_id: UUID) -> dict[str, Any]:
         async with self.db.read() as s:
@@ -135,6 +302,9 @@ class QueryService:
                 "approval": (revision.compiled or {}).get("approval"),
                 "projection": (revision.compiled or {}).get("projection"),
                 "required_outcomes": (revision.compiled or {}).get("outcomes", []),
+                "candidate_digest": revision.candidate_digest,
+                "semantic_disposition": revision.semantic_disposition,
+                "semantic_assessment": (revision.compiled or {}).get("semantic_assessment"),
                 "issues": (revision.compile_result or {}).get("issues", []),
             },
             "metadata": root.meta,

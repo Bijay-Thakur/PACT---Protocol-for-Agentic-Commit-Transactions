@@ -111,10 +111,12 @@ async def test_model_customer_mismatch_needs_explicit_correction(rt, client, mon
     assert blocked.status_code == 422
     wrong_objective = await client.post("/api/v1/planner/accept", headers=request_headers,
                                       json={**body, "clarification_note": "Corrected customer identity",
+                                            "resolved_issue_codes": ["CRITICAL_ENTITY_MISMATCH"],
                                             "clarified_objective": "Cancel customer C-WRONG"})
     assert wrong_objective.status_code == 422
     corrected = await client.post("/api/v1/planner/accept", headers=request_headers,
-                                  json={**body, "clarification_note": "Corrected customer identity"})
+                                  json={**body, "clarification_note": "Corrected customer identity",
+                                        "resolved_issue_codes": ["CRITICAL_ENTITY_MISMATCH"]})
     assert corrected.status_code == 200 and corrected.json()["state"] == "CREATED"
 
 

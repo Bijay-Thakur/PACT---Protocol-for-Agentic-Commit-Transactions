@@ -154,10 +154,41 @@ async def test_unknown_model_workflow_is_reviewed_as_clarification():
     principal = Principal(uuid4(), "test", "agent", PrincipalKind.AGENT,
                           frozenset({"planner:propose"}))
     response = await review(ReviewRequest(proposal=PlanProposal(
-        objective="Cancel customer C-123", requested_workflow="CancelCustomer")),
+        objective="Cancel customer C-123", requested_workflow="CancelCustomer"),
+        original_intent="Cancel customer C-123"),
         principal, SimpleNamespace(workflows=default_workflows()))
     assert response["status"] == "NEEDS_CLARIFICATION"
     assert response["issues"] == [{"code": "UNKNOWN_WORKFLOW", "workflow": "CancelCustomer"}]
+    assert response["applied"] is False
+
+
+@pytest.mark.parametrize(
+    ("original", "expected_code"),
+    [
+        ("Cancel C-EV16 after the billing period", "TIMING_CONSTRAINT_OMITTED"),
+        ("Cancel C-EV16 and refund in EUR", "CURRENCY_OMITTED_OR_CHANGED"),
+        ("Cancel C-EV16 but also keep it active", "CONTRADICTORY_OUTCOME"),
+    ],
+)
+async def test_review_preserves_material_meaning_from_original_intent(original, expected_code):
+    principal = Principal(uuid4(), "test", "agent", PrincipalKind.AGENT,
+                          frozenset({"planner:propose"}))
+    proposal = PlanProposal(
+        objective="Cancel C-EV16",
+        requested_workflow="customer_offboarding",
+        entity_references={"customer_id": "C-EV16"},
+        candidate_actions=[
+            "cancel_subscription", "revoke_premium", "mark_churned",
+            "refund_unused", "confirm_customer",
+        ],
+    )
+    response = await review(
+        ReviewRequest(proposal=proposal, original_intent=original),
+        principal,
+        SimpleNamespace(workflows=default_workflows()),
+    )
+    assert response["status"] == "NEEDS_CLARIFICATION"
+    assert expected_code in {issue["code"] for issue in response["issues"]}
     assert response["applied"] is False
 
 

@@ -40,6 +40,19 @@ async def test_authenticated_multiactor_demo_success(migrated_db, scenario):
                     calls = (await rt.http.get("/sim/calls", params={
                         "customer_id": run["customer_id"]})).json()
                     assert calls == [], calls
+                external = (await rt.http.get(
+                    f"/sim/state/{run['customer_id']}"
+                )).json()
+                refunds = external["billing"]["refunds"]
+                if scenario in {"success", "unknown", "notification-ordering", "duplicate-operation"}:
+                    assert len(refunds) == 1, (scenario, external)
+                    assert external["subscription"]["status"] == "cancelled"
+                else:
+                    assert refunds == [], (scenario, external)
+                if scenario in {"compensation", "verification-mismatch"}:
+                    assert external["subscription"]["status"] == "active"
+                if scenario == "compensation-failure":
+                    assert external["subscription"]["status"] == "cancelled"
                 detail = await client.get(f"/api/v1/transactions/{run['root_id']}")
                 assert detail.status_code == 200, detail.text
                 assert len(detail.json()["tree"]) >= 4

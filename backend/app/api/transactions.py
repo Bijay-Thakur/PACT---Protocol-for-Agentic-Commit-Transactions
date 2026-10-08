@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import base64
+import json
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 from sqlalchemy import select
@@ -18,7 +21,7 @@ from app.runtime import Runtime
 from app.security.principals import Principal
 from app.services.query_service import QueryService
 from app.persistence.models import PlanRevisionRow, TransactionRow
-from app.domain.errors import StateConflict
+from app.domain.errors import StateConflict, ValidationFailed
 
 router = APIRouter(prefix="/api/v1/transactions", tags=["transactions"])
 
@@ -33,9 +36,66 @@ async def create_transaction(body: BeginRequest, p: Principal = Depends(principa
 
 @router.get("")
 async def list_transactions(limit: int = Query(default=50, ge=1, le=500),
+                            cursor: str | None = Query(default=None, max_length=500),
+                            state: str | None = Query(default=None, max_length=40),
+                            workflow: str | None = Query(default=None, max_length=64),
+                            actor: str | None = Query(default=None, max_length=128),
+                            search: str | None = Query(default=None, min_length=1, max_length=200),
+                            created_after: datetime | None = None,
+                            created_before: datetime | None = None,
                             p: Principal = Depends(principal),
                             q: QueryService = Depends(queries)) -> dict[str, Any]:
-    return {"transactions": await q.list_transactions(p, limit)}
+    before_created_at = None
+    before_id = None
+    if cursor:
+        try:
+            decoded = json.loads(base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4)))
+            before_created_at = datetime.fromisoformat(decoded["created_at"])
+            before_id = UUID(decoded["id"])
+        except (ValueError, KeyError, TypeError, json.JSONDecodeError):
+            raise ValidationFailed("transaction cursor is invalid", code="INVALID_CURSOR") from None
+    rows = await q.list_transactions(
+        p,
+        limit + 1,
+        state=state,
+        workflow=workflow,
+        actor=actor,
+        search=search,
+        created_after=created_after,
+        created_before=created_before,
+        before_created_at=before_created_at,
+        before_id=before_id,
+    )
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+    next_cursor = None
+    if has_more and rows:
+        payload = json.dumps(
+            {"created_at": rows[-1]["created_at"], "id": rows[-1]["id"]},
+            separators=(",", ":"),
+        ).encode()
+        next_cursor = base64.urlsafe_b64encode(payload).decode().rstrip("=")
+    return {"transactions": rows, "next_cursor": next_cursor}
+
+
+@router.get("/queues/overview")
+async def operations_overview(p: Principal = Depends(principal),
+                              q: QueryService = Depends(queries)) -> dict[str, Any]:
+    return await q.operations_overview(p)
+
+
+@router.get("/queues/approvals")
+async def approval_queue(limit: int = Query(default=100, ge=1, le=500),
+                         p: Principal = Depends(principal),
+                         q: QueryService = Depends(queries)) -> dict[str, Any]:
+    return {"approvals": await q.approval_queue(p, limit)}
+
+
+@router.get("/queues/incidents")
+async def incident_queue(limit: int = Query(default=100, ge=1, le=500),
+                         p: Principal = Depends(principal),
+                         q: QueryService = Depends(queries)) -> dict[str, Any]:
+    return {"incidents": await q.incident_queue(p, limit)}
 
 
 @router.get("/{tx_id}")

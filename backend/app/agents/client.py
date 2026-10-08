@@ -42,8 +42,10 @@ class HttpPactClient:
                            request_id: str | None = None) -> dict[str, Any]:
         return await self._req("POST", f"/transactions/{parent_id}/children", spec, request_id=request_id)
 
-    async def propose_effect(self, tx_id: str, proposal: dict[str, Any]) -> dict[str, Any]:
-        return await self._req("POST", f"/transactions/{tx_id}/effects", proposal)
+    async def propose_effect(self, tx_id: str, proposal: dict[str, Any],
+                             request_id: str | None = None) -> dict[str, Any]:
+        return await self._req("POST", f"/transactions/{tx_id}/effects", proposal,
+                               request_id=request_id)
 
     async def prepare(self, tx_id: str) -> dict[str, Any]:
         return await self._req("POST", f"/transactions/{tx_id}/prepare")
@@ -61,6 +63,9 @@ class HttpPactClient:
 
     async def operator_action(self, tx_id: str, body: dict[str, Any]) -> dict[str, Any]:
         return await self._req("POST", f"/transactions/{tx_id}/operator-actions", body)
+
+    async def reconcile(self, tx_id: str, reason: str) -> dict[str, Any]:
+        return await self.operator_action(tx_id, {"action": "RECONCILE", "reason": reason})
 
     # Phase 2 convenience methods. Identity comes from the API key, and approval
     # remains an operator-only route rather than an agent convenience method.

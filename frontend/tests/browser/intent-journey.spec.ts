@@ -15,7 +15,7 @@ async function signIn(page: Page, username: "requester" | "approver") {
 }
 
 test("requester accepts an intent, separate operator approves, and exact commit yields a receipt", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/requests/new");
   await signIn(page, "requester");
   await page.getByLabel("Business intent").fill(`Cancel customer ${fixture.customer} and refund the unused period`);
   await page.getByRole("button", { name: "Interpret and review" }).click();
@@ -24,6 +24,7 @@ test("requester accepts an intent, separate operator approves, and exact commit 
   await page.getByRole("button", { name: "Accept reviewed request into a draft" }).click();
   await page.getByRole("button", { name: "Assemble actions from trusted facts" }).click();
   await page.getByRole("button", { name: "Prepare and freeze consequence review" }).click();
+  await expect(page.getByText("The frozen plan is ready for a separate authorized approver.")).toBeVisible();
   const draftLink = page.getByRole("link", { name: /^[0-9a-f]{8}-[0-9a-f-]{27,}$/i }).first();
   const href = await draftLink.getAttribute("href");
   expect(href).toMatch(/^\/tx\/[0-9a-f-]+$/i);
@@ -54,7 +55,7 @@ test("requester accepts an intent, separate operator approves, and exact commit 
 
 test("revision invalidates approval; denied approval and a browser disconnect do not bypass the barrier", async ({ page }) => {
   const customer = `${fixture.customer}-REVISE`;
-  await page.goto("/");
+  await page.goto("/requests/new");
   await signIn(page, "requester");
   await page.getByLabel("Business intent").fill(`Cancel customer ${customer} and refund the unused period`);
   await page.getByRole("button", { name: "Interpret and review" }).click();
@@ -62,6 +63,7 @@ test("revision invalidates approval; denied approval and a browser disconnect do
   await page.getByRole("button", { name: "Accept reviewed request into a draft" }).click();
   await page.getByRole("button", { name: "Assemble actions from trusted facts" }).click();
   await page.getByRole("button", { name: "Prepare and freeze consequence review" }).click();
+  await expect(page.getByText("The frozen plan is ready for a separate authorized approver.")).toBeVisible();
   const draftLink = page.getByRole("link", { name: /^[0-9a-f]{8}-[0-9a-f-]{27,}$/i }).first();
   const href = await draftLink.getAttribute("href");
   expect(href).toMatch(/^\/tx\/[0-9a-f-]+$/i);
@@ -115,7 +117,7 @@ test("revision invalidates approval; denied approval and a browser disconnect do
 
 test("applied refund mismatch remains a human obligation in the browser and draft receipt", async ({ page }) => {
   const customer = `${fixture.customer}-MISMATCH`;
-  await page.goto("/");
+  await page.goto("/requests/new");
   await signIn(page, "requester");
   await page.getByLabel("Business intent").fill(`Cancel customer ${customer} and refund the unused period`);
   await page.getByRole("button", { name: "Interpret and review" }).click();
@@ -123,6 +125,7 @@ test("applied refund mismatch remains a human obligation in the browser and draf
   await page.getByRole("button", { name: "Accept reviewed request into a draft" }).click();
   await page.getByRole("button", { name: "Assemble actions from trusted facts" }).click();
   await page.getByRole("button", { name: "Prepare and freeze consequence review" }).click();
+  await expect(page.getByText("The frozen plan is ready for a separate authorized approver.")).toBeVisible();
   const draftLink = page.getByRole("link", { name: /^[0-9a-f]{8}-[0-9a-f-]{27,}$/i }).first();
   const href = await draftLink.getAttribute("href");
   expect(href).toMatch(/^\/tx\/[0-9a-f-]+$/i);
@@ -143,4 +146,54 @@ test("applied refund mismatch remains a human obligation in the browser and draf
   await expect(page.getByText("Residual obligations")).toBeVisible();
   await expect(page.getByText("APPLIED_MISMATCH")).toBeVisible();
   await expect(page.getByText(/Observed amount: \$99\.00/).first()).toBeVisible();
+});
+
+test("contradictory intent stays in clarification until the issue is explicitly resolved", async ({ page }) => {
+  const customer = `${fixture.customer}-CONTRADICT`;
+  await page.goto("/requests/new");
+  await signIn(page, "requester");
+  await page.getByLabel("Business intent").fill(`Cancel customer ${customer} but also keep it active`);
+  await page.getByRole("button", { name: "Interpret and review" }).click();
+  await expect(page.getByText("NEEDS_CLARIFICATION")).toBeVisible();
+  await expect(page.getByRole("checkbox", { name: /CONTRADICTORY_OUTCOME/ })).toBeVisible();
+  await page.getByRole("checkbox", { name: /CONTRADICTORY_OUTCOME/ }).check();
+  await page.getByLabel("Clarified objective").fill(`Cancel ${customer} and refund the unused period`);
+  await page.getByLabel("Clarification note (required if the proposal has unresolved questions)").fill(
+    "The customer confirmed cancellation; the keep-active clause is withdrawn");
+  await page.getByRole("button", { name: "Accept reviewed request into a draft" }).click();
+  await page.getByRole("button", { name: "Assemble actions from trusted facts" }).click();
+  await page.getByRole("button", { name: "Prepare and freeze consequence review" }).click();
+  await expect(page.getByText("The frozen plan is ready for a separate authorized approver.")).toBeVisible();
+});
+
+test("paused UNKNOWN demo reconciles from the incident without a second refund", async ({ page }) => {
+  await page.goto("/demo");
+  await signIn(page, "approver");
+  await page.getByLabel("Live pacing").selectOption("0");
+  await page.getByRole("checkbox", { name: "Pause at UNKNOWN" }).check();
+  await page.locator(".neu-raised-md", { hasText: "Ambiguous result" }).getByRole("button", { name: "Run" }).click();
+  await expect(page).toHaveURL(/\/tx\//);
+  await expect(page.getByText("UNKNOWN").first()).toBeVisible({ timeout: 60_000 });
+  const txUrl = page.url();
+  await page.goto("/incidents");
+  await expect(page.getByText("UNKNOWN").first()).toBeVisible();
+  await page.goto(txUrl);
+  await page.getByRole("button", { name: "Reconcile" }).click();
+  await expect(page.getByText("COMMITTED_VERIFIED").first()).toBeVisible({ timeout: 60_000 });
+  await page.getByRole("link", { name: /View receipt/ }).click();
+  await expect(page.getByText("COMMITTED_VERIFIED").first()).toBeVisible();
+});
+
+test("primary navigation is keyboard reachable at desktop and mobile widths", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/transactions");
+  await signIn(page, "requester");
+  const incidents = page.getByRole("navigation", { name: "Primary" }).getByRole("link", { name: "Incidents" });
+  await incidents.focus();
+  await expect(incidents).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL(/\/incidents/);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.getByRole("link", { name: "Overview" })).toBeVisible();
+  await expect(page.getByText("UNKNOWN, mismatch, and residual obligations requiring action")).toBeVisible();
 });

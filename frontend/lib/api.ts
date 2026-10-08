@@ -76,8 +76,31 @@ export const api = {
     await post("/api/v1/auth/logout");
     sessionStorage.removeItem("pact_csrf");
   },
-  listTransactions: (limit = 50) =>
-    request<{ transactions: TransactionSummary[] }>(`/api/v1/transactions?limit=${limit}`),
+  listTransactions: (limit = 50, filters: {
+    state?: string; workflow?: string; actor?: string; search?: string; cursor?: string;
+  } = {}) => {
+    const params = new URLSearchParams({ limit: String(limit) });
+    Object.entries(filters).forEach(([key, value]) => { if (value) params.set(key, value); });
+    return request<{ transactions: TransactionSummary[]; next_cursor: string | null }>(
+      `/api/v1/transactions?${params}`,
+    );
+  },
+  operationsOverview: () => request<{
+    tenant_id: string; principal: string; roles: string[]; state_counts: Record<string, number>;
+    active: number; incidents: number; open_residuals: number; pending_approvals: number;
+    worker_backlog: number; measured_at: string;
+  }>("/api/v1/transactions/queues/overview"),
+  approvalQueue: () => request<{ approvals: {
+    transaction_id: string; objective: string; digest: string; revision: number;
+    approval: Record<string, unknown>; projection: Record<string, unknown>;
+    semantic_assessment: Record<string, unknown> | null; updated_at: string;
+  }[] }>("/api/v1/transactions/queues/approvals"),
+  incidentQueue: () => request<{ incidents: {
+    transaction_id: string; objective: string; state: string; updated_at: string;
+    permitted_actions: string[]; residuals: {
+      id: string; kind: string; description: string; required_remediation: string;
+    }[];
+  }[] }>("/api/v1/transactions/queues/incidents"),
   getTransaction: (id: string) => request<TransactionDetail>(`/api/v1/transactions/${id}`),
   getEvents: (id: string, after = 0) =>
     request<{ events: PactEvent[] }>(`/api/v1/transactions/${id}/events?after=${after}&limit=2000`),
@@ -117,13 +140,13 @@ export const api = {
       unresolved_questions: string[];
     };
   }>("/api/v1/planner/propose", { intent }),
-  reviewIntent: (proposal: unknown) => post<{
+  reviewIntent: (proposalTraceId: string, proposal: unknown) => post<{
     status: string; workflow: string; business_request: Record<string, unknown> | null;
     required_slots: string[]; issues: { code: string; [key: string]: unknown }[];
     authorized_to_begin: boolean; next_action: string;
-  }>("/api/v1/planner/review", { proposal }),
+  }>("/api/v1/planner/review", { proposal_trace_id: proposalTraceId, proposal }),
   acceptIntent: (body: { proposal_trace_id: string; business_request: Record<string, unknown>;
-    clarified_objective: string; clarification_note: string }, requestId: string) =>
+    clarified_objective: string; clarification_note: string; resolved_issue_codes: string[] }, requestId: string) =>
     request<{ transaction_id: string; state: string; next_action: string }>("/api/v1/planner/accept",
       { method: "POST", headers: { "X-PACT-Request-ID": requestId }, body: JSON.stringify(body) }),
   assembleDraft: (id: string) => post<{ status: string; trusted_eligible_refund?: string;

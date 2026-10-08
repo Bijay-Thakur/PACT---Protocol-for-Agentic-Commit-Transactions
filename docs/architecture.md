@@ -64,7 +64,7 @@ PACT is a transaction and commit layer. Agents propose; PACT decides, executes, 
 4. Operator actions are recorded (`operator_actions` + events) and appear on receipts.
 5. Receipts are immutable after finalization (no mutation routes, DB trigger).
 
-Not implemented (MVP): real authentication of agents/operators (actor ids are asserted, then bound and checked), multi-tenancy, signed receipts.
+Implemented authentication uses server-issued API keys for agents and operators; actor and tenant identity are derived from the authenticated principal and checked against server-side grants. A local Docker reference run measured denied direct writes and one PACT-mediated Git promotion; that is not a production deployment certification. Enterprise identity federation, signed receipts, and production-provider adapters are not implemented. Tenant scoping exists in the service and persistence model, but has not received a separate production multi-tenancy certification.
 
 ## Simulated external world
 

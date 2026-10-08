@@ -1,8 +1,7 @@
 "use client";
 
-import { ScenarioLauncher } from "@/components/ScenarioLauncher";
-import { IntentReview } from "@/components/IntentReview";
 import { TransactionList } from "@/components/TransactionList";
+import { OverviewMetrics } from "@/components/OverviewMetrics";
 
 export default function Home() {
   return (
@@ -17,8 +16,7 @@ export default function Home() {
           locally; nothing executes until the root crosses the global commit barrier.
         </div>
       </div>
-      <IntentReview />
-      <ScenarioLauncher />
+      <OverviewMetrics />
       <TransactionList />
     </div>
   );

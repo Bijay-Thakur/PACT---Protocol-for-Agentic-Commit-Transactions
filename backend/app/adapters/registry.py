@@ -24,7 +24,9 @@ class UnsupportedContractVersion(StateConflict):
 
 class EffectRegistry:
     def __init__(self, adapters: list[EffectAdapter]):
-        self._adapters = {a.contract.effect_type: a for a in adapters}
+        self._adapters: dict[str, EffectAdapter] = {}
+        for adapter in adapters:
+            self.register(adapter)
 
     def has(self, effect_type: str) -> bool:
         return effect_type in self._adapters
@@ -55,7 +57,13 @@ class EffectRegistry:
         return [self._adapters[k].contract for k in sorted(self._adapters)]
 
     def register(self, adapter: EffectAdapter) -> None:
-        self._adapters[adapter.contract.effect_type] = adapter
+        effect_type = adapter.contract.effect_type
+        if effect_type in self._adapters:
+            raise ValidationFailed(
+                f"effect type {effect_type!r} already has an adapter; provider/account routing is ambiguous",
+                code="AMBIGUOUS_ADAPTER_REGISTRATION",
+            )
+        self._adapters[effect_type] = adapter
 
 
 def default_registry() -> EffectRegistry:

@@ -14,6 +14,7 @@ No database transaction is held open across provider or model calls.
 from __future__ import annotations
 
 import asyncio
+import fnmatch
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
@@ -62,6 +63,8 @@ from app.domain.enums import (
 )
 from app.domain.errors import NotFound, StateConflict, ValidationFailed
 from app.domain.invariant import InvariantEvaluation
+from app.agents.semantic_judge import DeterministicSemanticJudge, JudgeService, judge_released
+from app.domain.semantics import IntentSemantics, SemanticAssessment, assess_compiled_candidate
 from app.domain.transaction import ApprovalRequest, CommitRequest, OperatorActionRequest, RecoveryPolicy
 from app.persistence.models import (
     ApprovalRow,
@@ -69,17 +72,23 @@ from app.persistence.models import (
     EffectDependencyRow,
     InvariantEvaluationRow,
     InvariantRow,
+    IntentAcceptanceRow,
     LogicalOperationRow,
     OperationAttemptRow,
     PlanRevisionRow,
     PrincipalRow,
     ReceiptRow,
     ResidualObligationRow,
+    SemanticAdjudicationRow,
+    SemanticAssessmentRow,
     TransactionRow,
 )
-from app.persistence.repositories import TreeRows, append_event, effect_view, get_tx, load_tree
+from app.persistence.repositories import (
+    TreeRows, append_event, cap_node, effect_node, effect_view, get_tx, load_tree,
+)
 from app.policy.workflows import CompileInput, DraftCap, DraftEffect, Issue, WorkflowRegistry
-from app.policy.digest import fingerprint
+from app.policy.digest import digest, fingerprint
+from app.policy.outcomes import evaluate_required_outcome
 from app.security.principals import Forbidden, Principal
 from app.telemetry.tracing import span
 
@@ -105,7 +114,8 @@ def _now() -> datetime:
 class Coordinator:
     def __init__(self, ctx: ExecutionContext, manager: TransactionManager, barrier: CommitBarrier,
                  invariants: InvariantEngine, receipts: ReceiptGenerator, workflows: WorkflowRegistry,
-                 reservations: ReservationService, budgets: BudgetService, settings: Settings):
+                 reservations: ReservationService, budgets: BudgetService, settings: Settings,
+                 judge=None):
         self.ctx = ctx
         self.db = ctx.db
         self.manager = manager
@@ -116,6 +126,8 @@ class Coordinator:
         self.reservations = reservations
         self.budgets = budgets
         self.settings = settings
+        self.judge = judge or DeterministicSemanticJudge()
+        self.semantic_reviews = JudgeService(self.db, settings, lambda: self.judge)
         self.executor = Executor(ctx, self._authority_problems)
         self.verifier = Verifier(ctx)
         self.reconciler = Reconciler(ctx, self.verifier)
@@ -176,9 +188,55 @@ class Coordinator:
             if t.principal_id and (t.principal_id not in principals or principals[t.principal_id].status != "ACTIVE"):
                 problems.append(f"principal {t.actor_id} is revoked")
         initiator = principals.get(rows.root.principal_id)
-        if initiator is not None and (initiator.grants.get("workflows") or {}).get(rows.root.workflow) is None:
+        current_grant = None if initiator is None else (
+            (initiator.grants.get("workflows") or {}).get(rows.root.workflow)
+        )
+        if initiator is not None and current_grant is None:
             problems.append("initiating workflow grant revoked")
+        elif initiator is not None and current_grant is not None:
+            workflow = self.workflows.get(rows.root.workflow)
+            params = {
+                key: value for key, value in (rows.root.meta or {}).items()
+                if key in workflow.params_model.model_fields
+            }
+            try:
+                current_cap = workflow.root_capability(params, current_grant, self.manager.clock())
+            except ValidationFailed as exc:
+                problems.append(f"initiating workflow grant no longer covers the target: {exc.code}")
+            else:
+                allowed_types = set(current_cap["allowed_effect_types"])
+                allowed_resources = current_cap["allowed_resources"]
+                amount_limit = Decimal(str(current_cap["amount_limit"]))
+                cumulative_limit = Decimal(str(current_cap["cumulative_amount_limit"]))
+                planned_total = Decimal("0")
+                for effect in rows.effects.values():
+                    if E(effect.state) == E.ABORTED:
+                        continue
+                    if effect.contract_type not in allowed_types:
+                        problems.append(f"current grant no longer allows {effect.contract_type}")
+                    for claim in effect.resource_claims or []:
+                        resource = claim.get("resource", "")
+                        if not any(fnmatch.fnmatchcase(resource, pattern) for pattern in allowed_resources):
+                            problems.append(f"current grant no longer covers resource {resource}")
+                    if effect.amount is not None:
+                        planned_total += effect.amount
+                        if effect.amount > amount_limit:
+                            problems.append(
+                                f"effect {effect.operation_key} exceeds current amount authority"
+                            )
+                if planned_total > cumulative_limit:
+                    problems.append("planned cumulative amount exceeds current initiating grant")
         now = self.manager.clock()
+        for effect in rows.effects.values():
+            if E(effect.state) not in (E.PREPARED, E.RETRYABLE):
+                continue
+            tx = rows.txs.get(effect.transaction_id)
+            cap = rows.caps.get(tx.capability_id) if tx is not None and tx.capability_id else None
+            if cap is None:
+                problems.append(f"{effect.operation_key} has no current capability")
+                continue
+            for violation in self.manager.authority.check_effect(cap_node(cap), effect_node(effect), now):
+                problems.append(f"{effect.operation_key}: {violation.code}")
         for c in rows.caps.values():
             if c.expires_at is not None and c.expires_at <= now:
                 problems.append(f"capability of {c.subject_id} expired")
@@ -260,6 +318,8 @@ class Coordinator:
                 if root.state != T.PREPARED:
                     return {"transaction_id": str(root_id), "status": "PREPARING",
                             "state": root.state, "next_action": "WAIT_FOR_ACTIVE_PREPARATION"}
+        else:
+            await self._ensure_semantic_judge(root_id, generation)
         return await self._compile(root_id, generation)
 
     async def _prepare_local(self, root_id: UUID, tx_id: UUID) -> int | None:
@@ -340,6 +400,118 @@ class Coordinator:
                     tx.meta = {**(tx.meta or {}), "prepare_failures": []}
                 return generation
 
+    async def _ensure_semantic_judge(self, root_id: UUID, generation: int) -> None:
+        """Judge the candidate outside the compile lock, then publish by digest."""
+
+        async with self.db.read() as session:
+            root = await session.get(TransactionRow, root_id)
+            if root is None or root.state != T.PREPARING or root.prepare_generation != generation:
+                return
+            acceptance = (await session.execute(select(IntentAcceptanceRow).where(
+                IntentAcceptanceRow.root_id == root.id))).scalar_one_or_none()
+            if acceptance is None or not acceptance.intent_semantics:
+                return
+            accepted = IntentSemantics.model_validate(acceptance.intent_semantics)
+            if not accepted.source_text:
+                return
+            rows = await load_tree(session, root_id, lock=False)
+            result = await self._build_compile_result(session, rows)
+            if result.status != "COMPILED" or not result.digest:
+                return
+            snapshot = {
+                "tenant_id": root.tenant_id,
+                "principal_id": root.principal_id,
+                "revision_no": root.current_revision,
+                "candidate_digest": result.digest,
+                "source_text": accepted.source_text,
+                "accepted": accepted,
+                "plan": _jsonable(result.plan),
+            }
+        await self.semantic_reviews.ensure(
+            tenant_id=snapshot["tenant_id"], principal_id=snapshot["principal_id"], root_id=root_id,
+            generation=generation, revision_no=snapshot["revision_no"],
+            candidate_digest=snapshot["candidate_digest"], source_text=snapshot["source_text"],
+            accepted=snapshot["accepted"], plan=snapshot["plan"],
+        )
+
+    async def _build_compile_result(self, s: AsyncSession, rows: TreeRows):
+        root = rows.root
+        wf = self.workflows.get(root.workflow)
+        principal = await s.get(PrincipalRow, root.principal_id)
+        if principal is None or principal.status != "ACTIVE":
+            raise Forbidden("initiating principal is revoked", code="PRINCIPAL_REVOKED")
+        grant = (principal.grants.get("workflows") or {}).get(wf.key) or {}
+        live = [e for e in rows.effects.values() if E(e.state) in (E.VALIDATED, E.PREPARED)]
+        unprepared = [t.actor_id for t in rows.txs.values()
+                      if t.id != root.id and t.required and T(t.state) != T.PREPARED
+                      and any(e.transaction_id == t.id for e in live)]
+        unprepared_effects = [e for e in live if E(e.state) != E.PREPARED and e.transaction_id != root.id]
+        inp = CompileInput(
+            tenant_id=root.tenant_id, root_id=root.id, root_actor=root.actor_id,
+            params={k: v for k, v in (root.meta or {}).items() if k in wf.params_model.model_fields},
+            grant=grant,
+            effects=[DraftEffect(id=e.id, transaction_id=e.transaction_id, actor=e.actor_id,
+                                 effect_type=e.contract_type, slot=e.slot, payload=dict(e.payload),
+                                 declared_depends_on=list(e.depends_on or []),
+                                 client_operation_key=e.client_operation_key,
+                                 prepare_evidence=dict(e.prepare_evidence or {}),
+                                 prepared=E(e.state) == E.PREPARED,
+                                 prior_identity=e.operation_key if e.revision_no is not None else None)
+                     for e in live],
+            caps=[DraftCap(transaction_id=c.transaction_id, subject=c.subject_id,
+                           allowed_effect_types=list(c.scope["allowed_effect_types"]),
+                           allowed_resources=list(c.scope["allowed_resources"]),
+                           amount_limit=c.amount_limit, cumulative_limit=c.cumulative_limit,
+                           delegation_depth=c.delegation_depth, expires_at=c.expires_at,
+                           parent_capability_id=c.parent_capability_id) for c in rows.caps.values()],
+            unprepared_children=sorted(set(unprepared) | {e.actor_id for e in unprepared_effects}),
+            epoch=1, now=self.manager.clock())
+        result = wf.compile(inp, self.ctx.registry)
+        epoch = await self._epoch_for(s, root, result.business_request_key)
+        if epoch != 1:
+            inp.epoch = epoch
+            result = wf.compile(inp, self.ctx.registry)
+        if result.status == "COMPILED":
+            await self._identity_issues(s, result)
+        return result
+
+    async def _record_assessment(self, s: AsyncSession, root: TransactionRow, assessment, document: dict,
+                                 assessment_hash: str, candidate_digest: str) -> SemanticAssessmentRow:
+        model = assessment.model or "unspecified"
+        existing = (await s.execute(select(SemanticAssessmentRow).where(
+            SemanticAssessmentRow.tenant_id == root.tenant_id,
+            SemanticAssessmentRow.candidate_digest == candidate_digest,
+            SemanticAssessmentRow.provider == assessment.provider,
+            SemanticAssessmentRow.model == model,
+            SemanticAssessmentRow.prompt_version == assessment.prompt_version,
+            SemanticAssessmentRow.rubric_version == assessment.rubric_version,
+            SemanticAssessmentRow.configuration_version == assessment.configuration_version,
+        ))).scalar_one_or_none()
+        if existing is not None:
+            return existing
+        row = SemanticAssessmentRow(
+            tenant_id=root.tenant_id, root_id=root.id, revision_no=root.current_revision,
+            prepare_generation=root.prepare_generation, candidate_digest=candidate_digest,
+            assessment_hash=assessment_hash, aggregate=assessment.aggregate, provider=assessment.provider,
+            model=model, prompt_version=assessment.prompt_version, schema_version=assessment.schema_version,
+            rubric_version=assessment.rubric_version, configuration_version=assessment.configuration_version,
+            assessment=document, usage=assessment.usage, latency_ms=assessment.latency_ms,
+        )
+        s.add(row)
+        return row
+
+    async def _judge_row(self, s: AsyncSession, tenant_id: str, candidate_digest: str) -> SemanticAssessmentRow | None:
+        judge = self.judge
+        return (await s.execute(select(SemanticAssessmentRow).where(
+            SemanticAssessmentRow.tenant_id == tenant_id,
+            SemanticAssessmentRow.candidate_digest == candidate_digest,
+            SemanticAssessmentRow.provider == judge.name,
+            SemanticAssessmentRow.model == judge.model,
+            SemanticAssessmentRow.prompt_version == judge.prompt_version,
+            SemanticAssessmentRow.rubric_version == judge.rubric_version,
+            SemanticAssessmentRow.configuration_version == judge.configuration_version,
+        ))).scalar_one_or_none()
+
     async def _compile(self, root_id: UUID, expected_generation: int | None = None) -> dict[str, Any]:
         with span("plan.compile", transaction_id=root_id, root_id=root_id):
             async with self.db.uow() as s:
@@ -352,43 +524,68 @@ class Coordinator:
                     return self._revision_summary(root, rev)
                 if root.state != T.PREPARING:
                     raise StateConflict(f"root is {root.state}; cannot compile", code="SPECIFICATION_CLOSED")
+                result = await self._build_compile_result(s, rows)
                 wf = self.workflows.get(root.workflow)
-                principal = await s.get(PrincipalRow, root.principal_id)
-                if principal is None or principal.status != "ACTIVE":
-                    raise Forbidden("initiating principal is revoked", code="PRINCIPAL_REVOKED")
-                grant = (principal.grants.get("workflows") or {}).get(wf.key) or {}
                 live = [e for e in rows.effects.values() if E(e.state) in (E.VALIDATED, E.PREPARED)]
-                unprepared = [t.actor_id for t in rows.txs.values()
-                              if t.id != root.id and t.required and T(t.state) != T.PREPARED
-                              and any(e.transaction_id == t.id for e in live)]
-                unprepared_effects = [e for e in live if E(e.state) != E.PREPARED and e.transaction_id != root.id]
-                inp = CompileInput(
-                    tenant_id=root.tenant_id, root_id=root.id, root_actor=root.actor_id,
-                    params={k: v for k, v in (root.meta or {}).items()
-                            if k in wf.params_model.model_fields}, grant=grant,
-                    effects=[DraftEffect(id=e.id, transaction_id=e.transaction_id, actor=e.actor_id,
-                                         effect_type=e.contract_type, slot=e.slot, payload=dict(e.payload),
-                                         declared_depends_on=list(e.depends_on or []),
-                                         client_operation_key=e.client_operation_key,
-                                         prepare_evidence=dict(e.prepare_evidence or {}),
-                                         prepared=E(e.state) == E.PREPARED,
-                                         prior_identity=e.operation_key if e.revision_no is not None else None)
-                             for e in live],
-                    caps=[DraftCap(transaction_id=c.transaction_id, subject=c.subject_id,
-                                   allowed_effect_types=list(c.scope["allowed_effect_types"]),
-                                   allowed_resources=list(c.scope["allowed_resources"]),
-                                   amount_limit=c.amount_limit, cumulative_limit=c.cumulative_limit,
-                                   delegation_depth=c.delegation_depth, expires_at=c.expires_at,
-                                   parent_capability_id=c.parent_capability_id) for c in rows.caps.values()],
-                    unprepared_children=sorted(set(unprepared) | {e.actor_id for e in unprepared_effects}),
-                    epoch=1, now=self.manager.clock())
-                result = wf.compile(inp, self.ctx.registry)
-                epoch = await self._epoch_for(s, root, result.business_request_key)
-                if epoch != 1:
-                    inp.epoch = epoch
-                    result = wf.compile(inp, self.ctx.registry)
-                if result.status == "COMPILED":
-                    await self._identity_issues(s, result)
+                if result.status == "COMPILED" and result.digest:
+                    acceptance = (await s.execute(select(IntentAcceptanceRow).where(
+                        IntentAcceptanceRow.root_id == root.id))).scalar_one_or_none()
+                    if acceptance is not None and acceptance.intent_semantics:
+                        accepted = IntentSemantics.model_validate(acceptance.intent_semantics)
+                        candidate_digest = result.digest
+                        assessment = assess_compiled_candidate(accepted, result.plan, candidate_digest)
+                        assessment_document = assessment.model_dump(mode="json")
+                        assessment_hash = digest({"semantic_assessment": assessment_document})
+                        await self._record_assessment(
+                            s, root, assessment, assessment_document, assessment_hash, candidate_digest)
+                        judge_row = await self._judge_row(s, root.tenant_id, candidate_digest)
+                        adjudications = list((await s.execute(select(SemanticAdjudicationRow).where(
+                            SemanticAdjudicationRow.tenant_id == root.tenant_id,
+                            SemanticAdjudicationRow.root_id == root.id,
+                            SemanticAdjudicationRow.candidate_digest == candidate_digest,
+                        ))).scalars())
+                        dismissed = {code for row in adjudications for code in (row.issue_codes or [])}
+                        judge_document = None
+                        judge_hash = None
+                        released = True
+                        if accepted.source_text:
+                            if judge_row is None or judge_row.candidate_digest != candidate_digest:
+                                released = False
+                                result.issues.append(Issue(
+                                    "SEMANTIC_JUDGE_REQUIRED",
+                                    "natural-language candidate has no current advisory assessment",
+                                    kind="CLARIFY"))
+                            else:
+                                judged = SemanticAssessment.model_validate(judge_row.assessment)
+                                judge_document = judge_row.assessment
+                                judge_hash = judge_row.assessment_hash
+                                released = judge_released(judged, dismissed)
+                                if not released:
+                                    result.issues.extend(Issue(
+                                        issue.code, issue.detail, kind="CLARIFY") for issue in judged.issues)
+                        if assessment.aggregate != "PASS" or not released:
+                            result.status = "NEEDS_CLARIFICATION"
+                            if assessment.aggregate != "PASS":
+                                result.issues.extend(Issue(
+                                    issue.code, issue.detail, kind="CLARIFY") for issue in assessment.issues)
+                        else:
+                            bound_semantics = accepted.model_copy(update={"source_text": None}).model_dump(mode="json")
+                            result.plan = {
+                                **result.plan,
+                                "candidate_digest": candidate_digest,
+                                "intent_semantics": bound_semantics,
+                                "semantic_assessment": assessment_document,
+                                "semantic_assessment_hash": assessment_hash,
+                                "judge_assessment": judge_document,
+                                "judge_assessment_hash": judge_hash,
+                                "adjudication_hashes": [
+                                    digest({"candidate_digest": row.candidate_digest,
+                                            "issue_codes": row.issue_codes, "evidence": row.evidence,
+                                            "reason": row.reason})
+                                    for row in adjudications
+                                ],
+                            }
+                            result.digest = digest(result.plan)
                 rev = await self._frozen_revision(s, root)
                 if result.status != "COMPILED":
                     rev.status = str(PlanRevisionStatus.REJECTED if result.status == "REJECTED"
@@ -435,8 +632,12 @@ class Coordinator:
                         append_event(s, root, EventType.INVARIANT_REGISTERED,
                                      {**inv.model_dump(mode="json"), "source": wf.policy_version})
                 root.business_request_key = result.business_request_key
-                root.meta = {**(root.meta or {}), "epoch": inp.epoch}
+                root.meta = {**(root.meta or {}), "epoch": (result.plan or {}).get("epoch", 1)}
                 rev.status, rev.compiled, rev.digest = str(PlanRevisionStatus.FROZEN), _jsonable(result.plan), result.digest
+                if result.plan.get("candidate_digest"):
+                    rev.candidate_digest = result.plan["candidate_digest"]
+                    rev.semantic_assessment_hash = result.plan["semantic_assessment_hash"]
+                    rev.semantic_disposition = result.plan["semantic_assessment"]["aggregate"]
                 rev.compile_result, rev.approval_required = result.summary(), bool(result.approval.get("required"))
                 rev.frozen_at = self.manager.clock()
                 self.manager.transition_tx(s, root, T.PREPARED, "plan compiled and frozen", digest=result.digest,
@@ -609,8 +810,9 @@ class Coordinator:
             if rev.digest != req.revision_digest:
                 raise StateConflict("requested digest is not the current frozen revision",
                                     code="REVISION_DIGEST_MISMATCH", details={"current": rev.digest})
-            if root.workflow == "customer_offboarding" and rev.policy_version != self.workflows.get(root.workflow).policy_version:
-                raise StateConflict("offboarding policy changed; revise and prepare before dispatch",
+            current_workflow = self.workflows.get(root.workflow)
+            if rev.policy_version != current_workflow.policy_version:
+                raise StateConflict("workflow policy changed; revise and prepare before dispatch",
                                     code="POLICY_REVISION_REQUIRED")
             rows = await load_tree(s, root_id, lock=False)
             views = [effect_view(e) for e in rows.effects.values() if E(e.state) == E.PREPARED]
@@ -1043,14 +1245,17 @@ class Coordinator:
                     for requirement in required_outcomes:
                         if requirement.get("effect_id") != str(eid):
                             continue
-                        if requirement.get("predicate") == "observed_refund_equals" and (
-                                str(obs.observed_amount) != requirement["amount"]
-                                or obs.application != Application.APPLIED):
+                        try:
+                            outcome_passed, outcome_reason = evaluate_required_outcome(requirement, obs)
+                        except ValidationFailed as exc:
+                            outcome_passed, outcome_reason = False, f"{exc.code}: {exc}"
+                        if not outcome_passed:
                             drift.append(eff.operation_key)
                             self.ctx.evidence.open_residual(
                                 s, rows.txs[eff.transaction_id], eff, ResidualKind.APPLIED_MISMATCH,
-                                "final refund does not satisfy the frozen required amount",
-                                "Investigate actual provider amount.", observation_id=row.id)
+                                outcome_reason,
+                                "Investigate the pinned outcome and actual provider state.",
+                                observation_id=row.id)
                 root.meta = {**(root.meta or {}), "final_observation_ids": sorted(final_ids)}
                 snap = rows.snapshot()
                 graph = EffectGraph([e for e in snap.effects if e.state != E.ABORTED])

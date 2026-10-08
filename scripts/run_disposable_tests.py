@@ -9,6 +9,7 @@ import asyncio
 import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
@@ -55,7 +56,8 @@ def main() -> int:
         return 2
     env = {**os.environ, "PACT_TEST_DATABASE_URL": target}
     cmd = [sys.executable, "-m", "pytest", "-q", *(sys.argv[1:] or ["backend/tests"]), "--basetemp",
-           str(ROOT / ".pytest_tmp" / "phase21_pg"), "-p", "no:cacheprovider"]
+           str(Path(tempfile.gettempdir()) / f"pact_phase21_pg_{os.getpid()}"),
+           "-p", "no:cacheprovider"]
     return subprocess.call(cmd, cwd=ROOT, env=env)
 
 

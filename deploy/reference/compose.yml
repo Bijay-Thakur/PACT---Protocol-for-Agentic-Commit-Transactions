@@ -47,8 +47,8 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
       simulators: { condition: service_started }
-    networks: [protected, agent]
-    ports: ["127.0.0.1:8000:8000"]
+    networks: [protected, agent, publish]
+    ports: ["127.0.0.1:18080:8000"]
     security_opt: ["no-new-privileges:true"]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz', timeout=2).read()"]
@@ -78,6 +78,7 @@ networks:
     internal: true
   agent:
     internal: true
+  publish:
 
 volumes:
   reference_pgdata:

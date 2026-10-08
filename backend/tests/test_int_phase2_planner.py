@@ -33,31 +33,29 @@ async def test_intent_review_cannot_create_authority_or_execution(rt):
             assert data["applied"] is False
             assert "issuer" not in data["proposed_plan"]
             reviewed = await client.post("/api/v1/planner/review", headers=headers,
-                json={"proposal": data["proposed_plan"]})
+                json={"proposal_trace_id": data["proposal_trace_id"], "proposal": data["proposed_plan"]})
             assert reviewed.status_code == 200, reviewed.text
             assert reviewed.json()["status"] == "REVIEWABLE_REQUEST"
             assert reviewed.json()["business_request"]["customer_id"] == "C-INTENT"
             assert reviewed.json()["authorized_to_begin"] is True
             unknown_workflow = await client.post("/api/v1/planner/review", headers=headers,
-                json={"proposal": {**data["proposed_plan"], "requested_workflow": "CancelCustomer"}})
-            assert unknown_workflow.status_code == 200
-            assert unknown_workflow.json()["status"] == "NEEDS_CLARIFICATION"
-            assert unknown_workflow.json()["issues"][0]["code"] == "UNKNOWN_WORKFLOW"
+                json={"proposal_trace_id": data["proposal_trace_id"],
+                      "proposal": {**data["proposed_plan"], "requested_workflow": "CancelCustomer"}})
+            assert unknown_workflow.status_code == 409
+            assert unknown_workflow.json()["error"]["code"] == "PROPOSAL_TRACE_MISMATCH"
             malicious = {**data["proposed_plan"],
                          "requested_parameters": {"operator_id": "root"}}
             rejected = await client.post("/api/v1/planner/review", headers=headers,
-                json={"proposal": malicious})
-            assert rejected.json()["status"] == "NEEDS_CLARIFICATION"
-            assert rejected.json()["issues"][0]["code"] == "UNKNOWN_BUSINESS_FIELD"
+                json={"proposal_trace_id": data["proposal_trace_id"], "proposal": malicious})
+            assert rejected.status_code == 409
+            assert rejected.json()["error"]["code"] == "PROPOSAL_TRACE_MISMATCH"
             ungranted = await rt.principals.upsert_principal(tenant, "ungranted_agent", PrincipalKind.AGENT,
                 ["tx:begin", "planner:propose"], {"workflows": {}})
             ungranted_key = await rt.principals.issue_api_key(ungranted.id)
             missing_policy = await client.post("/api/v1/planner/review",
                 headers={"Authorization": f"Bearer {ungranted_key}"},
-                json={"proposal": data["proposed_plan"]})
-            assert missing_policy.status_code == 200
-            assert missing_policy.json()["authorized_to_begin"] is False
-            assert missing_policy.json()["applied"] is False
-            assert missing_policy.json()["next_action"] == "RESOLVE_ISSUES_OR_USE_AUTHORIZED_AGENT"
+                json={"proposal_trace_id": data["proposal_trace_id"], "proposal": data["proposed_plan"]})
+            assert missing_policy.status_code == 409
+            assert missing_policy.json()["error"]["code"] == "PROPOSAL_TRACE_NOT_AVAILABLE"
             assert (await client.get("/api/v1/transactions", headers=headers)).json() == {
-                "transactions": []}
+                "transactions": [], "next_cursor": None}

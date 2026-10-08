@@ -18,6 +18,7 @@ export function IntentReview() {
   const [error, setError] = useState<string | null>(null);
   const [draftId, setDraftId] = useState<string | null>(null);
   const [draftStatus, setDraftStatus] = useState<string | null>(null);
+  const [resolvedIssueCodes, setResolvedIssueCodes] = useState<string[]>([]);
   const [result, setResult] = useState<{
     proposalTraceId: string; provider: string; live: boolean; model: string | null; review: Review;
     intentIssues: { code: string; detail: string }[];
@@ -36,8 +37,9 @@ export function IntentReview() {
       setResult(null);
       setDraftId(null);
       setDraftStatus(null);
+      setResolvedIssueCodes([]);
       const proposal = await api.proposeIntent(intent);
-      const review = await api.reviewIntent(proposal.proposed_plan);
+      const review = await api.reviewIntent(proposal.proposal_trace_id, proposal.proposed_plan);
       setObjective(proposal.proposed_plan.objective);
       setCustomerId(String(review.business_request?.customer_id || proposal.proposed_plan.entity_references.customer_id || ""));
       setReason(String(review.business_request?.reason || "customer requested cancellation"));
@@ -53,7 +55,8 @@ export function IntentReview() {
     void run(async () => {
       const accepted = await api.acceptIntent({ proposal_trace_id: result.proposalTraceId,
         business_request: { customer_id: customerId, reason },
-        clarified_objective: objective, clarification_note: clarification }, requestId);
+        clarified_objective: objective, clarification_note: clarification,
+        resolved_issue_codes: resolvedIssueCodes }, requestId);
       setDraftId(accepted.transaction_id);
       setDraftStatus("CREATED");
     });
@@ -93,6 +96,16 @@ export function IntentReview() {
           <div>Review: <strong>{result.review.status}</strong> · workflow: <strong>{result.review.workflow}</strong></div>
           {result.intentIssues.length > 0 && <JsonView value={result.intentIssues} maxHeight={160} />}
           {result.review.issues.length > 0 && <JsonView value={result.review.issues} maxHeight={200} />}
+          {result.intentIssues.length > 0 && <fieldset className="space-y-2">
+            <legend className="font-semibold text-ink">Issues explicitly resolved by this clarification</legend>
+            {result.intentIssues.map((issue) => <label key={issue.code} className="flex gap-2">
+              <input type="checkbox" checked={resolvedIssueCodes.includes(issue.code)}
+                onChange={(event) => setResolvedIssueCodes((current) => event.target.checked
+                  ? [...new Set([...current, issue.code])]
+                  : current.filter((code) => code !== issue.code))} />
+              <span>{issue.code}: {issue.detail}</span>
+            </label>)}
+          </fieldset>}
           <label className="block">Clarified objective
             <textarea value={objective} onChange={(e) => setObjective(e.target.value)} rows={2}
               className="neu-field mt-1 w-full px-3 py-2" /></label>

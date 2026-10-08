@@ -408,6 +408,9 @@ class PlanRevisionRow(Base):
     policy_version: Mapped[str] = mapped_column(String(32), nullable=False)
     compiled: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    candidate_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    semantic_assessment_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    semantic_disposition: Mapped[str | None] = mapped_column(String(32), nullable=True)
     compile_result: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     approval_required: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_by: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
@@ -577,6 +580,8 @@ class ProposalTraceRow(Base):
     prompt_version: Mapped[str] = mapped_column(String(32), nullable=False)
     schema_version: Mapped[str] = mapped_column(String(32), nullable=False)
     intent_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_reference: Mapped[str | None] = mapped_column(String(500), nullable=True)
     proposal: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     validation: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     outcome: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -596,7 +601,58 @@ class IntentAcceptanceRow(Base):
     proposal_trace_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("proposal_traces.id"), nullable=False)
     root_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("transactions.id"), nullable=False, unique=True)
     clarified_request: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    accepted_objective: Mapped[str | None] = mapped_column(Text, nullable=True)
+    intent_semantics: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    resolved_issue_codes: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
     clarification_note: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_at: Mapped[datetime] = _ts()
+
+
+class SemanticAssessmentRow(Base):
+    __tablename__ = "semantic_assessments"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "candidate_digest", "provider", "model", "prompt_version",
+            "rubric_version", "configuration_version",
+            name="uq_semantic_assessment_cache",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = _pk()
+    tenant_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    root_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("transactions.id"), nullable=False, index=True)
+    revision_no: Mapped[int] = mapped_column(Integer, nullable=False)
+    prepare_generation: Mapped[int] = mapped_column(Integer, nullable=False)
+    candidate_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    assessment_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    aggregate: Mapped[str] = mapped_column(String(32), nullable=False)
+    provider: Mapped[str] = mapped_column(String(64), nullable=False)
+    model: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    prompt_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    schema_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    rubric_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    configuration_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    assessment: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    usage: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    latency_ms: Mapped[Decimal | None] = mapped_column(Numeric(12, 1), nullable=True)
+    created_at: Mapped[datetime] = _ts()
+
+
+class SemanticAdjudicationRow(Base):
+    __tablename__ = "semantic_adjudications"
+
+    id: Mapped[uuid.UUID] = _pk()
+    tenant_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    root_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("transactions.id"), nullable=False, index=True)
+    revision_no: Mapped[int] = mapped_column(Integer, nullable=False)
+    candidate_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    assessment_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("semantic_assessments.id"), nullable=False
+    )
+    principal_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("principals.id"), nullable=False)
+    issue_codes: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    evidence: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = _ts()
 
 

@@ -36,7 +36,8 @@ async def test_intent_accept_assemble_review_separate_approval_commit_receipt(cl
     assert contradictory.status_code == 200
     assert contradictory.json()["intent_issues"][0]["code"] == "CONTRADICTORY_OUTCOME"
     bad_review = await client.post("/api/v1/planner/review", headers=requester_headers,
-                                   json={"proposal": contradictory.json()["proposed_plan"]})
+                                   json={"proposal_trace_id": contradictory.json()["proposal_trace_id"],
+                                         "proposal": contradictory.json()["proposed_plan"]})
     assert bad_review.json()["status"] == "NEEDS_CLARIFICATION"
     proposed = await client.post("/api/v1/planner/propose", headers=requester_headers,
         json={"intent": f"Cancel customer {cid} and refund the unused period"})
@@ -44,7 +45,8 @@ async def test_intent_accept_assemble_review_separate_approval_commit_receipt(cl
     proposal = proposed.json()
     assert proposal["provider"] == "deterministic_fixture" and proposal["proposal_trace_id"]
     reviewed = await client.post("/api/v1/planner/review", headers=requester_headers,
-                                 json={"proposal": proposal["proposed_plan"]})
+                                 json={"proposal_trace_id": proposal["proposal_trace_id"],
+                                       "proposal": proposal["proposed_plan"]})
     assert reviewed.status_code == 200 and reviewed.json()["status"] == "REVIEWABLE_REQUEST", reviewed.text
     request_id = uuid.uuid4().hex
     body = {"proposal_trace_id": proposal["proposal_trace_id"],

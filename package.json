@@ -1,0 +1,9 @@
+{
+  "name": "pact-local",
+  "private": true,
+  "scripts": {
+    "dev": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/start_local.ps1",
+    "setup:operator": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/start_local.ps1 -SetupOperator",
+    "stop": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/stop_local.ps1"
+  }
+}

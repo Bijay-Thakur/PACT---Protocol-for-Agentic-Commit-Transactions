@@ -304,7 +304,10 @@ export interface TransactionDetail {
   policy: Policy;
   plan_revision?: { number: number; status: string; digest: string | null;
     approval_required: boolean; approval?: { role?: string; reason?: string };
-    projection?: Record<string, unknown>; required_outcomes?: Record<string, unknown>[] } | null;
+    projection?: Record<string, unknown>; required_outcomes?: Record<string, unknown>[];
+    candidate_digest?: string | null; semantic_disposition?: string | null;
+    semantic_assessment?: Record<string, unknown> | null;
+    issues?: Record<string, unknown>[] } | null;
   metadata: TxMetadata;
   tree: TreeNode[];
   capabilities: Capability[];

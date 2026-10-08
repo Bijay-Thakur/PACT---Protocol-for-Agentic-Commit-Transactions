@@ -649,7 +649,9 @@ class CodeSandboxChange(Workflow):
 
 class WorkflowRegistry:
     def __init__(self, workflows: list[Workflow]):
-        self._w = {w.key: w for w in workflows}
+        self._w: dict[str, Workflow] = {}
+        for workflow in workflows:
+            self.register(workflow)
 
     def get(self, key: str) -> Workflow:
         if key not in self._w:
@@ -661,6 +663,11 @@ class WorkflowRegistry:
         return [self._w[k] for k in sorted(self._w)]
 
     def register(self, wf: Workflow) -> None:
+        if wf.key in self._w:
+            raise ValidationFailed(
+                f"workflow {wf.key!r} is already registered",
+                code="AMBIGUOUS_WORKFLOW_REGISTRATION",
+            )
         self._w[wf.key] = wf
 
 
